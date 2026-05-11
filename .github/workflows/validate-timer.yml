@@ -207,9 +207,15 @@ jobs:
       - name: Verify systemd timer registered
         if: runner.os == 'Linux'
         run: |
+          set -euo pipefail
           echo "[validate-timer] systemd user timer: list + is-enabled"
           systemctl --user list-timers --all
           systemctl --user is-enabled dotfiles-git-commit.timer
+          echo "[validate-timer] assert service unit sets Environment=PATH (incl. \$HOME/.local/bin)"
+          grep -E '^Environment=("?)PATH=' "$HOME/.config/systemd/user/dotfiles-git-commit.service" \
+            | tee /dev/stderr \
+            | grep -q "$HOME/.local/bin" \
+            || { echo "FAIL: service unit missing Environment=PATH directive that includes \$HOME/.local/bin"; exit 1; }
           echo "[validate-timer] systemd timer ok"
 
       - name: Verify Task Scheduler task registered

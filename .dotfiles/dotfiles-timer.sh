@@ -122,6 +122,12 @@ AUTOSCRIPT
     sed -i "s|@DOTFILES_GIT_DIR@|$GIT_DIR|g;s|@DOTFILES_WORK_TREE@|$WORK_TREE|g;s|@GIT_ADD_SPEC@|$GIT_ADD_SPEC|g" "$SCRIPT_FILE"
     chmod +x "$SCRIPT_FILE"
 
+    # Capture install-time shell PATH and prepend well-known user-local bin dirs
+    # so hook stubs (e.g. uv-driven pre-push) work under systemd's sanitized PATH.
+    # Common uv install locations: $HOME/.local/bin (official installer),
+    # $HOME/.cargo/bin (cargo install), $HOME/bin (manual).
+    TIMER_PATH="$HOME/.local/bin:$HOME/bin:$HOME/.cargo/bin:$PATH"
+
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=Auto-commit tracked dotfiles changes
@@ -131,6 +137,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 Environment=SSH_AUTH_SOCK=%t/keyring/ssh
+Environment="PATH=$TIMER_PATH"
 ExecStart=$SCRIPT_FILE
 EOF
 
