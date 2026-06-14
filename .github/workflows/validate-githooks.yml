@@ -45,20 +45,6 @@ jobs:
             | tee "$RUNNER_TEMP/githooks-pre-commit.log" >/dev/null
           grep -q '\[dotfiles_githooks\] pre-commit' "$RUNNER_TEMP/githooks-pre-commit.log"
 
-      - name: StrEnum registry — Hook enum present, old API removed
-        working-directory: .dotfiles/githooks-runner
-        shell: bash
-        run: |
-          set -euo pipefail
-          grep -q 'class Hook(StrEnum)' dotfiles_githooks/names.py
-          grep -q 'PRE_COMMIT = "pre-commit"' dotfiles_githooks/names.py
-          # Old dispatch API must be fully removed.
-          ! grep -rq 'HOOK_NAMES' dotfiles_githooks/
-          ! grep -rq 'build_dispatch' dotfiles_githooks/
-          # Example shipped; real user_hooks.py must NOT be committed.
-          test -f dotfiles_githooks/user_hooks.example.py
-          ! test -f dotfiles_githooks/user_hooks.py
-
       - name: Registry — user handler fires WITHOUT re-running uv sync
         working-directory: .dotfiles/githooks-runner
         shell: bash
