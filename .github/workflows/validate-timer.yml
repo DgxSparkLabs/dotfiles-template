@@ -365,7 +365,11 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "[validate-timer] unit: status -> 'Last commit:' line, no fresh-commit WARNING"
-          $out = & (Join-Path $env:GITHUB_WORKSPACE '.dotfiles/dotfiles-timer.ps1') -Action status 2>&1 | Out-String
+          # Get-Status emits via Write-Host (the information stream, 6), so 2>&1 alone
+          # (which merges only the error stream) would never capture the 'Last commit:'
+          # line — the assertion would then throw despite status printing it. Merge ALL
+          # streams with *>&1 so $out holds exactly what a user sees on the console.
+          $out = & (Join-Path $env:GITHUB_WORKSPACE '.dotfiles/dotfiles-timer.ps1') -Action status *>&1 | Out-String
           Write-Host $out
           if ($out -notmatch 'Last commit:') { throw "FAIL: status missing 'Last commit:'" }
           if ($out -match 'WARNING: timer may be stuck') { throw "FAIL: false staleness warning right after a fresh commit" }
