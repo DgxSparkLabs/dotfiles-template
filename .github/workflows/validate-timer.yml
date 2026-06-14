@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -39,8 +39,10 @@ jobs:
           enable-cache: true
 
       # ── Synthetic bare repo: local fake remote so push works without creds ─
-      - name: Set up synthetic bare dotfiles repo (Linux)
-        if: runner.os == 'Linux'
+      # macOS is Unix → reuses the exact Linux bash setup (only the temp path differs,
+      # and /tmp exists on macOS too), so we gate on "not Windows".
+      - name: Set up synthetic bare dotfiles repo (Linux/macOS)
+        if: runner.os != 'Windows'
         run: |
           set -euo pipefail
           git config --global init.defaultBranch master
@@ -123,8 +125,8 @@ jobs:
           Write-Host "[validate-timer] bare repo setup done (Windows)"
 
       # ── README "Git hooks (optional)": uv sync + core.hooksPath + smoke test ─
-      - name: Set up git hooks (Linux)
-        if: runner.os == 'Linux'
+      - name: Set up git hooks (Linux/macOS)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
@@ -195,6 +197,19 @@ jobs:
           bash .dotfiles/dotfiles-timer.sh install
           echo "[validate-timer] dotfiles-timer.sh install ok"
 
+      # macOS: install writes the plist; `launchctl bootstrap` needs a GUI
+      # (aqua) session that headless runners lack, so the install soft-skips
+      # the bootstrap and still writes the plist. We assert the plist below.
+      - name: Install launchd agent (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          echo "[validate-timer] dotfiles-timer.sh install (launchd; bootstrap may soft-skip)"
+          bash .dotfiles/dotfiles-timer.sh install || true
+          test -f "$HOME/Library/LaunchAgents/dotfiles-git-commit.plist" \
+            || { echo "FAIL: plist not written"; exit 1; }
+          echo "[validate-timer] dotfiles-timer.sh install ok (plist present)"
+
       - name: Install Task Scheduler task
         if: runner.os == 'Windows'
         shell: pwsh
@@ -227,9 +242,50 @@ jobs:
           Write-Host "[validate-timer] Task state: $($task.State)"
           Write-Host "[validate-timer] Next run:   $((Get-ScheduledTaskInfo -TaskName 'dotfiles-git-commit').NextRunTime)"
 
+      # ── macOS: assert plist correctness (StartInterval 60, PATH + ──────────
+      #    SSH_AUTH_SOCK env keys, ProgramArguments points at .auto-commit.sh) ─
+      - name: Verify launchd plist correctness (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          plist="$HOME/Library/LaunchAgents/dotfiles-git-commit.plist"
+          test -f "$plist" || { echo "FAIL: missing $plist"; exit 1; }
+          echo "[validate-timer] plist contents:"
+          cat "$plist"
+
+          echo "[validate-timer] assert StartInterval 60"
+          # PlistBuddy reads the typed integer; fall back to grep if unavailable.
+          if /usr/libexec/PlistBuddy -c 'Print :StartInterval' "$plist" 2>/dev/null | grep -qx '60'; then
+            :
+          else
+            grep -A1 '<key>StartInterval</key>' "$plist" | grep -q '<integer>60</integer>' \
+              || { echo "FAIL: StartInterval is not 60"; exit 1; }
+          fi
+
+          echo "[validate-timer] assert ProgramArguments -> /bin/bash + .auto-commit.sh"
+          grep -q '<string>/bin/bash</string>' "$plist" \
+            || { echo "FAIL: ProgramArguments missing /bin/bash"; exit 1; }
+          grep -q "$HOME/.dotfiles/.auto-commit.sh" "$plist" \
+            || { echo "FAIL: plist does not point at .auto-commit.sh"; exit 1; }
+
+          echo "[validate-timer] assert EnvironmentVariables has PATH (incl. \$HOME/.local/bin) + SSH_AUTH_SOCK"
+          grep -q '<key>PATH</key>' "$plist" \
+            || { echo "FAIL: plist EnvironmentVariables missing PATH key"; exit 1; }
+          grep -q "$HOME/.local/bin" "$plist" \
+            || { echo "FAIL: PATH does not include \$HOME/.local/bin"; exit 1; }
+          grep -q '<key>SSH_AUTH_SOCK</key>' "$plist" \
+            || { echo "FAIL: plist EnvironmentVariables missing SSH_AUTH_SOCK key"; exit 1; }
+
+          echo "[validate-timer] assert StandardOut/ErrorPath under logs dir"
+          grep -q '<key>StandardOutPath</key>' "$plist" \
+            || { echo "FAIL: plist missing StandardOutPath"; exit 1; }
+          grep -q '<key>StandardErrorPath</key>' "$plist" \
+            || { echo "FAIL: plist missing StandardErrorPath"; exit 1; }
+          echo "[validate-timer] launchd plist ok"
+
       # ── Validate embedded git add mode (-u default, -A after reinstall) ─────
-      - name: "Validate .auto-commit embeds git add -u after install (Linux)"
-        if: runner.os == 'Linux'
+      - name: "Validate .auto-commit embeds git add -u after install (Linux/macOS)"
+        if: runner.os != 'Windows'
         run: |
           set -euo pipefail
           echo "[validate-timer] check .auto-commit.sh uses git add -u"
@@ -258,8 +314,8 @@ jobs:
           Write-Host "[validate-timer] PASS: generated script uses git add -u"
 
       # ── Unit test: commit fires when a tracked file changes ──────────────
-      - name: "Unit test: commit fires on file change (Linux)"
-        if: runner.os == 'Linux'
+      - name: "Unit test: commit fires on file change (Linux/macOS)"
+        if: runner.os != 'Windows'
         run: |
           set -euo pipefail
           dotfiles() { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" "$@"; }
@@ -290,8 +346,8 @@ jobs:
           Write-Host "[validate-timer] PASS: $msg"
 
       # ── Unit test: no spurious commit when nothing changed ───────────────
-      - name: "Unit test: no commit when nothing changed (Linux)"
-        if: runner.os == 'Linux'
+      - name: "Unit test: no commit when nothing changed (Linux/macOS)"
+        if: runner.os != 'Windows'
         run: |
           set -euo pipefail
           dotfiles() { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" "$@"; }
@@ -324,6 +380,15 @@ jobs:
           bash .dotfiles/dotfiles-timer.sh reinstall '--all'
           echo "[validate-timer] reinstall --all ok"
 
+      - name: "Reinstall with git add -A (macOS)"
+        if: runner.os == 'macOS'
+        run: |
+          echo "[validate-timer] dotfiles-timer.sh reinstall --all"
+          # reinstall re-runs launchctl bootstrap which soft-skips when
+          # session-less; the regenerated .auto-commit.sh is what we assert next.
+          bash .dotfiles/dotfiles-timer.sh reinstall '--all' || true
+          echo "[validate-timer] reinstall --all ok"
+
       - name: "Reinstall with git add -A (Windows)"
         if: runner.os == 'Windows'
         shell: pwsh
@@ -334,8 +399,8 @@ jobs:
           & (Join-Path $env:GITHUB_WORKSPACE '.dotfiles/dotfiles-timer.ps1') -Action reinstall -AddAll
           Write-Host "[validate-timer] reinstall -AddAll ok"
 
-      - name: "Validate .auto-commit embeds git add -A after reinstall --all (Linux)"
-        if: runner.os == 'Linux'
+      - name: "Validate .auto-commit embeds git add -A after reinstall --all (Linux/macOS)"
+        if: runner.os != 'Windows'
         run: |
           set -euo pipefail
           echo "[validate-timer] check .auto-commit.sh uses git add -A after reinstall --all"
