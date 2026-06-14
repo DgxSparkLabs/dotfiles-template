@@ -279,6 +279,22 @@ for _df_arg in "$@"; do
   esac
 done
 
+# Surface the last commit so a silently-stuck timer is visible. Platform-agnostic
+# (just queries the dotfiles repo), so both the launchd and systemd status paths
+# call it. Guards an empty repo / no commits by skipping on a failed git log.
+print_last_commit() {
+    local commit_meta commit_ts now_ts
+    if commit_meta=$(git --git-dir="$GIT_DIR" --work-tree="$WORK_TREE" log -1 --format='%h %cr|%ct' 2>/dev/null); then
+        echo ""
+        echo "Last commit: ${commit_meta%|*}"
+        commit_ts="${commit_meta##*|}"
+        now_ts=$(date +%s)
+        if [ -n "$commit_ts" ] && [ "$((now_ts - commit_ts))" -gt 3600 ]; then
+            echo "WARNING: timer may be stuck (last commit >1h ago)"
+        fi
+    fi
+}
+
 case "$(uname -s)" in
   Darwin)
     DOMAIN="$(launchd_domain)"
@@ -292,6 +308,7 @@ case "$(uname -s)" in
         uninstall|remove) remove_timer_launchd ;;
         status)
             launchctl print "$DOMAIN/$PLIST_LABEL"
+            print_last_commit
             ;;
         logs)
             tail -n 50 "$LAUNCHD_OUT_LOG" "$LAUNCHD_ERR_LOG" 2>/dev/null \
@@ -320,6 +337,7 @@ case "$(uname -s)" in
             systemctl --user status "$TIMER_UNIT"
             echo ""
             systemctl --user status "$SERVICE_UNIT"
+            print_last_commit
             ;;
         logs)
             journalctl --user-unit "$SERVICE_UNIT" --no-pager -n 50

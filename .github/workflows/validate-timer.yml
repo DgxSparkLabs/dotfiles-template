@@ -402,6 +402,36 @@ jobs:
           if ($msg -notmatch '^\s*chore\(dotfiles\):') { throw "FAIL: unexpected message: $msg" }
           Write-Host "[validate-timer] PASS: $msg"
 
+      # ── Unit test: status surfaces last commit, no false staleness ───────
+      - name: "Unit test: status shows Last commit, no false staleness (Linux)"
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          echo "[validate-timer] unit: status -> 'Last commit:' line, no fresh-commit WARNING"
+          out=$(bash .dotfiles/dotfiles-timer.sh status 2>&1 || true)
+          echo "$out"
+          echo "$out" | grep -q 'Last commit:' \
+            || { echo "FAIL: status missing 'Last commit:'"; exit 1; }
+          if echo "$out" | grep -q 'WARNING: timer may be stuck'; then
+            echo "FAIL: false staleness warning right after a fresh commit"; exit 1
+          fi
+          echo "[validate-timer] PASS: status surfaced last commit, no false staleness"
+
+      - name: "Unit test: status shows Last commit, no false staleness (Windows)"
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Write-Host "[validate-timer] unit: status -> 'Last commit:' line, no fresh-commit WARNING"
+          # Get-Status emits via Write-Host (the information stream, 6), so 2>&1 alone
+          # (which merges only the error stream) would never capture the 'Last commit:'
+          # line — the assertion would then throw despite status printing it. Merge ALL
+          # streams with *>&1 so $out holds exactly what a user sees on the console.
+          $out = & (Join-Path $env:GITHUB_WORKSPACE '.dotfiles/dotfiles-timer.ps1') -Action status *>&1 | Out-String
+          Write-Host $out
+          if ($out -notmatch 'Last commit:') { throw "FAIL: status missing 'Last commit:'" }
+          if ($out -match 'WARNING: timer may be stuck') { throw "FAIL: false staleness warning right after a fresh commit" }
+          Write-Host "[validate-timer] PASS: status surfaced last commit, no false staleness"
+
       # ── Unit test: no spurious commit when nothing changed ───────────────
       - name: "Unit test: no commit when nothing changed (Linux/macOS)"
         if: runner.os == 'Linux' || runner.os == 'macOS'
