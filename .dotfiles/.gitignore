@@ -2,6 +2,8 @@
 !.gitignore
 !.gitattributes
 
+!gitconfig.example
+
 !dotfiles-timer.sh
 !dotfiles-timer.ps1
 

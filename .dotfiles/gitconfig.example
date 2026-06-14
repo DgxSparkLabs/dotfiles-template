@@ -1,0 +1,24 @@
+# Example ~/.gitconfig for the dotfiles-template.
+#
+# Copy this file to ~/.gitconfig (it is shared across all your machines).
+# Machine-specific identity — your email, signing key — does NOT live here.
+# Instead it lives in an untracked, per-machine ~/.gitconfig.local that this
+# file pulls in via the [include] at the bottom.
+#
+#   cp ~/.dotfiles/... (see README "Per-machine git identity") to ~/.gitconfig
+#   printf '[user]\n\temail = you@example.com\n' > ~/.gitconfig.local
+#
+# A missing ~/.gitconfig.local is silently skipped by git, so every machine
+# must create its own.
+
+[init]
+	defaultBranch = master
+
+[pull]
+	rebase = false
+
+# Per-machine overrides (identity, signing, etc.). Keep this last so the
+# .local file wins over anything set above. ~/.gitconfig.local is NOT tracked
+# by this repo — create it on each machine. See README "Per-machine git identity".
+[include]
+	path = ~/.gitconfig.local
