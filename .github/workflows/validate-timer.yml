@@ -488,6 +488,168 @@ jobs:
           }
           Write-Host "[validate-timer] doctor ok (Windows)"
 
+      # ── README "dotfiles doctor": NEGATIVE tests — bad states are detected ──
+      # The positive test above only proves doctor reports all-PASS in a healthy
+      # setup. These steps deliberately construct each hard-FAIL precondition in
+      # an *isolated*, throwaway bare repo (pointed at via --git-dir/--work-tree,
+      # so the healthy $HOME/.dotfiles is untouched) and assert doctor (a) exits
+      # NON-ZERO and (b) prints the specific FAIL message for that condition.
+      #
+      # Hard-FAIL checks in dotfiles-doctor.{sh,ps1}:
+      #   1. uv on PATH                       — NOT simulated (cannot reliably
+      #                                          remove uv from the runner PATH
+      #                                          mid-job without breaking later
+      #                                          steps; low value vs. risk).
+      #   2. core.hooksPath == <gitdir>/.githooks   ── tested below
+      #   3. status.showUntrackedFiles == no        ── tested below
+      #   4. githooks-runner venv synced            ── tested below (unsynced)
+      #   5. work-tree clean                        ── tested below (dirty)
+      #   6. "no git repo at <gitdir>"        — implicitly covered (a missing
+      #                                          repo also trips checks 2-5);
+      #                                          the four above are the
+      #                                          reliably-reproducible signals.
+      # Network/SSH FAILs (no remote / unreachable) are out of scope here: the
+      # positive + negative matrix runs with --skip-network.
+      - name: "dotfiles doctor detects bad states (Linux)"
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          doctor="$HOME/.dotfiles/dotfiles-doctor.sh"
+
+          # mkbare <gitdir> <worktree>: minimal bare repo + work-tree with one
+          # committed tracked file, so we can later dirty it. No hooksPath, no
+          # status.showUntrackedFiles, no githooks-runner — a clean slate to
+          # selectively repair for per-check isolation.
+          mkbare() {
+            local gd=$1 wt=$2
+            rm -rf "$gd" "$wt"; mkdir -p "$wt"
+            git init --bare "$gd" -q
+            git --git-dir="$gd" --work-tree="$wt" -c user.email=t@t.test -c user.name=t \
+              commit --allow-empty -m init -q
+            echo orig > "$wt/tracked.txt"
+            git --git-dir="$gd" --work-tree="$wt" add "$wt/tracked.txt"
+            git --git-dir="$gd" --work-tree="$wt" -c user.email=t@t.test -c user.name=t \
+              commit -m add-tracked -q
+          }
+
+          # assert_detects <label> <fail-message-regex> <gitdir> <worktree>
+          # Runs doctor expecting FAILURE: this CI step PASSES only when doctor
+          # exits non-zero AND prints the expected FAIL line. If doctor exits 0
+          # (missed the bad state) or omits the message, the step FAILS.
+          assert_detects() {
+            local label=$1 re=$2 gd=$3 wt=$4 out code
+            echo "[validate-timer] negative: $label"
+            out="$(bash "$doctor" --git-dir "$gd" --work-tree "$wt" --skip-network 2>&1)" && code=0 || code=$?
+            echo "$out"
+            if [ "$code" -eq 0 ]; then
+              echo "FAIL: doctor exited 0 — did NOT detect bad state: $label"; exit 1
+            fi
+            echo "$out" | grep -Eq "$re" \
+              || { echo "FAIL: doctor exited non-zero but message not found: /$re/ for $label"; exit 1; }
+            echo "[validate-timer]   OK: detected (exit $code) + message present"
+          }
+
+          base="$RUNNER_TEMP/doctor-neg"
+
+          # Case 2: core.hooksPath unset (other checks repaired to isolate).
+          gd="$base/hookspath.git"; wt="$base/hookspath-wt"; mkbare "$gd" "$wt"
+          git --git-dir="$gd" config status.showUntrackedFiles no
+          assert_detects "core.hooksPath unset" \
+            '^  FAIL  core\.hooksPath is' "$gd" "$wt"
+
+          # Case 3: status.showUntrackedFiles unset.
+          gd="$base/sut.git"; wt="$base/sut-wt"; mkbare "$gd" "$wt"
+          git --git-dir="$gd" config core.hooksPath "$gd/.githooks"
+          assert_detects "status.showUntrackedFiles != no" \
+            '^  FAIL  status\.showUntrackedFiles is' "$gd" "$wt"
+
+          # Case 5: dirty work-tree (uncommitted change to a tracked file).
+          gd="$base/dirty.git"; wt="$base/dirty-wt"; mkbare "$gd" "$wt"
+          git --git-dir="$gd" config core.hooksPath "$gd/.githooks"
+          git --git-dir="$gd" config status.showUntrackedFiles no
+          echo changed > "$wt/tracked.txt"
+          assert_detects "work-tree dirty" \
+            '^  FAIL  work-tree has uncommitted tracked changes' "$gd" "$wt"
+
+          # Case 4: githooks-runner venv not synced (runner dir present, but its
+          # pyproject pins an unsatisfiable dep and there is no synced .venv, so
+          # `uv sync --frozen --check` fails). uv is on PATH (asserted positive).
+          gd="$base/venv.git"; wt="$base/venv-wt"; mkbare "$gd" "$wt"
+          git --git-dir="$gd" config core.hooksPath "$gd/.githooks"
+          git --git-dir="$gd" config status.showUntrackedFiles no
+          mkdir -p "$gd/githooks-runner"
+          printf '[project]\nname = "neg"\nversion = "0"\nrequires-python = ">=3.9"\ndependencies = ["this-pkg-does-not-exist-zzzz==9.9.9"]\n' \
+            > "$gd/githooks-runner/pyproject.toml"
+          assert_detects "venv not synced" \
+            '^  FAIL  githooks-runner venv not synced' "$gd" "$wt"
+
+          echo "[validate-timer] doctor negative tests ok (Linux)"
+
+      - name: "dotfiles doctor detects bad states (Windows)"
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $doctor = Join-Path $env:USERPROFILE '.dotfiles\dotfiles-doctor.ps1'
+
+          # New-BareRepo: minimal bare repo + work-tree with one committed tracked
+          # file. No hooksPath / showUntrackedFiles / githooks-runner — a clean
+          # slate to selectively repair for per-check isolation.
+          function New-BareRepo([string]$gd, [string]$wt) {
+              if (Test-Path $gd) { Remove-Item -Recurse -Force $gd }
+              if (Test-Path $wt) { Remove-Item -Recurse -Force $wt }
+              New-Item -ItemType Directory -Force -Path $wt | Out-Null
+              git init --bare $gd -q
+              git --git-dir="$gd" --work-tree="$wt" -c user.email=t@t.test -c user.name=t commit --allow-empty -m init -q
+              'orig' | Set-Content (Join-Path $wt 'tracked.txt')
+              git --git-dir="$gd" --work-tree="$wt" add (Join-Path $wt 'tracked.txt')
+              git --git-dir="$gd" --work-tree="$wt" -c user.email=t@t.test -c user.name=t commit -m add-tracked -q
+          }
+
+          # Assert-Detects: runs doctor expecting FAILURE. This CI step PASSES only
+          # when doctor exits non-zero AND prints the expected FAIL line. If doctor
+          # exits 0 (missed it) or omits the message, the step throws (fails).
+          function Assert-Detects([string]$label, [string]$re, [string]$gd, [string]$wt) {
+              Write-Host "[validate-timer] negative: $label"
+              $out  = & $doctor -GitDir $gd -WorkTree $wt -SkipNetwork 2>&1 | Out-String
+              $code = $LASTEXITCODE
+              Write-Host $out
+              if ($code -eq 0) { throw "FAIL: doctor exited 0 — did NOT detect bad state: $label" }
+              if ($out -notmatch $re) { throw "FAIL: doctor exited non-zero but message not found: /$re/ for $label" }
+              Write-Host "[validate-timer]   OK: detected (exit $code) + message present"
+          }
+
+          $base = Join-Path $env:RUNNER_TEMP 'doctor-neg'
+
+          # Case 2: core.hooksPath unset.
+          $gd = "$base\hookspath.git"; $wt = "$base\hookspath-wt"; New-BareRepo $gd $wt
+          git --git-dir="$gd" config status.showUntrackedFiles no
+          Assert-Detects 'core.hooksPath unset' '(?m)^  FAIL  core\.hooksPath is' $gd $wt
+
+          # Case 3: status.showUntrackedFiles unset.
+          $gd = "$base\sut.git"; $wt = "$base\sut-wt"; New-BareRepo $gd $wt
+          git --git-dir="$gd" config core.hooksPath "$gd\.githooks"
+          Assert-Detects 'status.showUntrackedFiles != no' '(?m)^  FAIL  status\.showUntrackedFiles is' $gd $wt
+
+          # Case 5: dirty work-tree.
+          $gd = "$base\dirty.git"; $wt = "$base\dirty-wt"; New-BareRepo $gd $wt
+          git --git-dir="$gd" config core.hooksPath "$gd\.githooks"
+          git --git-dir="$gd" config status.showUntrackedFiles no
+          'changed' | Set-Content (Join-Path $wt 'tracked.txt')
+          Assert-Detects 'work-tree dirty' '(?m)^  FAIL  work-tree has uncommitted tracked changes' $gd $wt
+
+          # Case 4: githooks-runner venv not synced (unsatisfiable dep, no synced .venv).
+          $gd = "$base\venv.git"; $wt = "$base\venv-wt"; New-BareRepo $gd $wt
+          git --git-dir="$gd" config core.hooksPath "$gd\.githooks"
+          git --git-dir="$gd" config status.showUntrackedFiles no
+          New-Item -ItemType Directory -Force -Path "$gd\githooks-runner" | Out-Null
+          "[project]`nname = `"neg`"`nversion = `"0`"`nrequires-python = `">=3.9`"`ndependencies = [`"this-pkg-does-not-exist-zzzz==9.9.9`"]" |
+            Set-Content "$gd\githooks-runner\pyproject.toml"
+          Assert-Detects 'venv not synced' '(?m)^  FAIL  githooks-runner venv not synced' $gd $wt
+
+          Write-Host "[validate-timer] doctor negative tests ok (Windows)"
+
       # ── Install ──────────────────────────────────────────────────────────
       - name: Install systemd timer
         if: runner.os == 'Linux'
