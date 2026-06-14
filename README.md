@@ -324,7 +324,7 @@ pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git -Branch my-laptop
 pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git -y
 ```
 
-Conflicting OS-default files are backed up to `*.bak` before checkout, so nothing is lost. After checkout the scripts set `status.showUntrackedFiles no` and reload your shell.
+Conflicting OS-default files are backed up to `*.bak` before checkout, so nothing is lost. After checkout the scripts set `status.showUntrackedFiles no`. Open a new shell (or reload your profile) so the `dotfiles` wrapper is available.
 
 ---
 

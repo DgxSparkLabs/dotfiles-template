@@ -158,13 +158,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          # The tracked script reloads the shell at the end (exec $SHELL), which
-          # would replace the CI step. We run a tweaked copy: GITDIR redirected to
-          # a fresh dir and the final exec dropped. The branch-resolution logic
-          # (arguments, -y, prompt, TTY guard) is preserved verbatim.
+          # We run a tweaked copy with GITDIR redirected to a fresh dir so the
+          # smoke test does not touch the runner's real dotfiles. The
+          # branch-resolution logic (arguments, -y, prompt, TTY guard) is
+          # preserved verbatim. (The script no longer reloads the shell.)
           make_ci_copy() {  # $1 = git-dir to use
             sed -e 's#\$HOME/\.dotfiles#'"$1"'#g' \
-                -e 's/^exec .*/echo "[bootstrap] (shell reload skipped in CI)"/' \
                 "$GITHUB_WORKSPACE/.dotfiles/bootstrap.sh"
           }
 
@@ -248,14 +247,13 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
-          # The tracked script reloads the profile at the end (. $PROFILE), which
-          # we drop in CI. We run a tweaked copy: git-dir redirected to a fresh
-          # dir, profile reload dropped. The branch-resolution logic (-Branch, -y,
-          # prompt, interactive guard) is preserved verbatim.
+          # We run a tweaked copy with git-dir redirected to a fresh dir so the
+          # smoke test does not touch the runner's real dotfiles. The
+          # branch-resolution logic (-Branch, -y, prompt, interactive guard) is
+          # preserved verbatim. (The script no longer reloads the profile.)
           function Make-CiCopy([string]$gitdir, [string]$dest) {
             $src = Get-Content "$env:GITHUB_WORKSPACE/.dotfiles/bootstrap.ps1" -Raw
             $src = $src -replace '\$HOME/\.dotfiles', $gitdir
-            $src = $src -replace '(?m)^\. \$PROFILE.*$', 'Write-Host "[bootstrap] (profile reload skipped in CI)"'
             Set-Content -Path $dest -Value $src
           }
 

@@ -101,5 +101,3 @@ if ($LASTEXITCODE -ne 0) {
 # branch so the daily workflow (commit/push) lands there. The work tree already
 # matches the branch, so this does not touch any files and status stays clean.
 dotfiles symbolic-ref HEAD "refs/heads/$Branch"
-
-. $PROFILE
