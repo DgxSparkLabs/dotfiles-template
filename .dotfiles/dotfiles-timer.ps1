@@ -318,6 +318,22 @@ function Get-Status {
     if (-not $found) {
         Write-Host "Not installed."
     }
+
+    # Surface the last commit so a silently-stuck timer is visible.
+    $gitArgs = @('--git-dir', $GitDir, '--work-tree', $WorkTree)
+    $commitMeta = & git @gitArgs log -1 --format='%h %cr|%ct' 2>$null
+    if ($LASTEXITCODE -eq 0 -and $commitMeta) {
+        $parts = $commitMeta -split '\|', 2
+        Write-Host ""
+        Write-Host "Last commit: $($parts[0])"
+        $commitTs = 0
+        if ($parts.Count -ge 2 -and [int64]::TryParse($parts[1], [ref]$commitTs)) {
+            $nowTs = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+            if (($nowTs - $commitTs) -gt 3600) {
+                Write-Host "WARNING: timer may be stuck (last commit >1h ago)"
+            }
+        }
+    }
 }
 
 function Get-Logs {
