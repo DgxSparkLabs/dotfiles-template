@@ -5,26 +5,85 @@
 # This defines it temporarily, clones your bare repo, then checks out your
 # machine's branch (which restores the profile and re-establishes the alias).
 #
-# Parameters (environment variables):
-#   DOTFILES_REPO    (required) git remote URL, e.g. git@github.com:<YOU>/dotfiles.git
-#   DOTFILES_BRANCH  (optional) branch to check out. Defaults to the auto-detected
-#                    machine name: the DMI board_name on Linux, or "WSL" under WSL.
+# Parameters (command-line arguments — preferred):
+#   --repo <url>      (required) git remote URL, e.g. git@github.com:<YOU>/dotfiles.git
+#   --branch <name>   (optional) branch to check out. If omitted, the machine name
+#                     is auto-detected and you are prompted to confirm it or type
+#                     a different branch.
+#   <repo-url> [branch]  positional form, equivalent to the flags above.
+#
+# Fallback (only used when the matching argument is absent):
+#   DOTFILES_REPO    git remote URL
+#   DOTFILES_BRANCH  branch to check out
 #
 # Usage:
-#   DOTFILES_REPO=git@github.com:<YOU>/dotfiles.git bash bootstrap.sh
-#   DOTFILES_REPO=... DOTFILES_BRANCH=my-laptop bash bootstrap.sh
+#   bash bootstrap.sh --repo git@github.com:<YOU>/dotfiles.git
+#   bash bootstrap.sh --repo git@github.com:<YOU>/dotfiles.git --branch my-laptop
+#   bash bootstrap.sh git@github.com:<YOU>/dotfiles.git my-laptop
+#
+# When no branch is given the script auto-detects this machine's name and asks
+# you to confirm it (or type another branch). In a non-interactive context
+# (no TTY, e.g. CI), pass --branch explicitly — the script errors instead of
+# hanging on the prompt.
 
 set -eu
 
-# ── Required parameter: fail fast if the remote URL is missing ──────────────
-if [ -z "${DOTFILES_REPO:-}" ]; then
-  echo "bootstrap.sh: DOTFILES_REPO is required (the git remote URL of your dotfiles repo)." >&2
-  echo "  e.g. DOTFILES_REPO=git@github.com:<YOU>/dotfiles.git bash bootstrap.sh" >&2
+usage() {
+  cat >&2 <<'EOF'
+Usage: bootstrap.sh --repo <url> [--branch <name>]
+       bootstrap.sh <repo-url> [branch]
+
+  --repo <url>     git remote URL of your dotfiles repo (required)
+  --branch <name>  branch to check out (optional; you are prompted if omitted)
+
+Falls back to $DOTFILES_REPO / $DOTFILES_BRANCH when the argument is absent.
+EOF
+}
+
+# ── Parse arguments: flags take precedence, positional as a convenience ─────
+REPO=""
+BRANCH=""
+branch_set=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo)   shift; [ $# -gt 0 ] || { echo "bootstrap.sh: --repo needs a value" >&2; usage; exit 1; }; REPO="$1" ;;
+    --repo=*) REPO="${1#--repo=}" ;;
+    --branch)   shift; [ $# -gt 0 ] || { echo "bootstrap.sh: --branch needs a value" >&2; usage; exit 1; }; BRANCH="$1"; branch_set=1 ;;
+    --branch=*) BRANCH="${1#--branch=}"; branch_set=1 ;;
+    -h|--help) usage; exit 0 ;;
+    --) shift; break ;;
+    -*) echo "bootstrap.sh: unknown option: $1" >&2; usage; exit 1 ;;
+    *)
+      if [ -z "$REPO" ]; then REPO="$1"
+      elif [ "$branch_set" -eq 0 ]; then BRANCH="$1"; branch_set=1
+      else echo "bootstrap.sh: unexpected argument: $1" >&2; usage; exit 1
+      fi
+      ;;
+  esac
+  shift
+done
+
+# Trailing positionals after `--`.
+if [ $# -gt 0 ]; then
+  if [ -z "$REPO" ]; then REPO="$1"; shift; fi
+  if [ $# -gt 0 ] && [ "$branch_set" -eq 0 ]; then BRANCH="$1"; branch_set=1; shift; fi
+fi
+
+# ── Repo: argument wins, env var is the documented fallback ─────────────────
+if [ -z "$REPO" ]; then REPO="${DOTFILES_REPO:-}"; fi
+if [ -z "$REPO" ]; then
+  echo "bootstrap.sh: a repo URL is required (the git remote URL of your dotfiles repo)." >&2
+  usage
   exit 1
 fi
-REPO="$DOTFILES_REPO"
 
-# ── Branch: explicit override, else auto-detect this machine's name ─────────
+# Branch fallback: env var only when no --branch/positional was given.
+if [ "$branch_set" -eq 0 ] && [ -n "${DOTFILES_BRANCH:-}" ]; then
+  BRANCH="$DOTFILES_BRANCH"
+  branch_set=1
+fi
+
+# ── Branch: explicit value, else auto-detect + confirm with the user ────────
 detect_branch() {
   # WSL reports a Microsoft kernel; treat the whole WSL world as one branch.
   if grep -qiE '(microsoft|wsl)' /proc/version 2>/dev/null; then
@@ -38,7 +97,20 @@ detect_branch() {
   # Last resort: hostname.
   hostname
 }
-BRANCH="${DOTFILES_BRANCH:-$(detect_branch)}"
+
+if [ "$branch_set" -eq 0 ]; then
+  detected="$(detect_branch)"
+  # Non-interactive guard: never hang waiting on a prompt (e.g. in CI).
+  if [ ! -t 0 ]; then
+    echo "bootstrap.sh: no branch given and stdin is not a TTY; cannot prompt." >&2
+    echo "  Pass the branch explicitly, e.g. --branch $detected" >&2
+    exit 1
+  fi
+  printf 'Detected machine branch: %s\n' "$detected" >&2
+  printf 'Press Enter to use it, or type a different branch name: ' >&2
+  read -r reply
+  if [ -n "$reply" ]; then BRANCH="$reply"; else BRANCH="$detected"; fi
+fi
 
 echo "bootstrap.sh: repo=$REPO branch=$BRANCH"
 

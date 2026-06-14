@@ -288,30 +288,33 @@ For full disaster-recovery automation, see [Restoring a machine from scratch](#r
 
 The `dotfiles` alias lives in your profile — which hasn't been restored yet. The tracked bootstrap scripts define it temporarily, clone your bare repo, then check out your machine's branch (which restores the profile). They live in your repo at [`.dotfiles/bootstrap.sh`](.dotfiles/bootstrap.sh) and [`.dotfiles/bootstrap.ps1`](.dotfiles/bootstrap.ps1).
 
-Both are parameterized by environment variables:
+Both take the repo URL and (optionally) the branch as **command-line parameters**:
 
-| Variable | Required | Default |
+| Parameter | Required | Default |
 | --- | --- | --- |
-| `DOTFILES_REPO` | yes (fails fast if missing) | — |
-| `DOTFILES_BRANCH` | no | auto-detected machine name — Linux `/sys/class/dmi/id/board_name`, WSL → `WSL`, Windows `(Get-WmiObject Win32_BaseBoard).product` |
+| repo (`--repo` / `-Repo`) | yes (fails fast if missing) | — |
+| branch (`--branch` / `-Branch`) | no | auto-detected machine name, **confirmed interactively** — Linux `/sys/class/dmi/id/board_name`, WSL → `WSL`, Windows `(Get-WmiObject Win32_BaseBoard).product`, else hostname |
+
+If you don't pass a branch, the script auto-detects this machine's name and asks you to confirm it (press Enter) or type a different branch before applying. In a non-interactive context (no TTY, e.g. CI) it errors and tells you to pass the branch explicitly, rather than hanging on the prompt. The `DOTFILES_REPO` / `DOTFILES_BRANCH` environment variables are still honored as a fallback, but command-line arguments take precedence.
 
 On a fresh machine you only have the script (copy it over, or fetch it from your repo's web UI). Run:
 
 **Bash / WSL / Linux:**
 
 ```bash
-DOTFILES_REPO=git@github.com:<YOU>/dotfiles.git bash bootstrap.sh
-# or pin the branch explicitly:
-DOTFILES_REPO=git@github.com:<YOU>/dotfiles.git DOTFILES_BRANCH=my-laptop bash bootstrap.sh
+bash bootstrap.sh --repo git@github.com:<YOU>/dotfiles.git
+# you'll be asked to confirm the detected branch, or:
+bash bootstrap.sh --repo git@github.com:<YOU>/dotfiles.git --branch my-laptop
+# positional form also works:
+bash bootstrap.sh git@github.com:<YOU>/dotfiles.git my-laptop
 ```
 
 **PowerShell (Windows):**
 
 ```powershell
-$env:DOTFILES_REPO = "git@github.com:<YOU>/dotfiles.git"
-pwsh bootstrap.ps1
-# or pin the branch explicitly:
-$env:DOTFILES_BRANCH = "my-laptop"; pwsh bootstrap.ps1
+pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git
+# you'll be asked to confirm the detected branch, or:
+pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git -Branch my-laptop
 ```
 
 Conflicting OS-default files are backed up to `*.bak` before checkout, so nothing is lost. After checkout the scripts set `status.showUntrackedFiles no` and reload your shell.

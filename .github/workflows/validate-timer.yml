@@ -132,15 +132,13 @@ jobs:
       # Drives .dotfiles/bootstrap.{sh,ps1} against the synthetic remote into a
       # FRESH git-dir ($HOME/.dotfiles-bootstrap, separate from the inline
       # $HOME/.dotfiles above), asserting a clean checkout + showUntrackedFiles=no.
-      # DOTFILES_BRANCH=master overrides the machine auto-detection so the
-      # checkout targets the branch we pushed. This is the step that should
-      # replace the inline setup once proven.
+      # The branch is passed as an explicit --repo/--branch argument (master,
+      # the branch we pushed) so the run is fully non-interactive and never
+      # prompts/hangs. This is the step that should replace the inline setup
+      # once proven.
       - name: Bootstrap smoke test (Linux)
         if: runner.os == 'Linux'
         shell: bash
-        env:
-          DOTFILES_REPO: /tmp/dotfiles-remote.git
-          DOTFILES_BRANCH: master
         run: |
           set -euo pipefail
           GITDIR="$HOME/.dotfiles-bootstrap"
@@ -148,13 +146,14 @@ jobs:
 
           # Run the tracked script with its real checkout/.bak logic, but point
           # it at a fresh git-dir and skip the `exec $SHELL` reload (which would
-          # replace the CI step's shell). We source a tweaked copy: same body,
-          # GITDIR redirected, final exec dropped.
+          # replace the CI step's shell). We run a tweaked copy: same body,
+          # GITDIR redirected, final exec dropped — and pass --repo/--branch
+          # explicitly (non-interactive, no prompt).
           echo "[validate-timer] run real bootstrap.sh against synthetic remote -> $GITDIR"
           sed -e 's#\$HOME/\.dotfiles#'"$GITDIR"'#g' \
               -e 's/^exec .*/echo "[bootstrap] (shell reload skipped in CI)"/' \
               "$GITHUB_WORKSPACE/.dotfiles/bootstrap.sh" > /tmp/bootstrap-ci.sh
-          bash /tmp/bootstrap-ci.sh
+          bash /tmp/bootstrap-ci.sh --repo /tmp/dotfiles-remote.git --branch master
 
           echo "[validate-timer] assert clean checkout (no pending changes)"
           test -f "$HOME/.gitignore" || { echo "FAIL: .gitignore not checked out"; exit 1; }
@@ -170,9 +169,6 @@ jobs:
       - name: Bootstrap smoke test (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        env:
-          DOTFILES_REPO: C:\dotfiles-remote.git
-          DOTFILES_BRANCH: master
         run: |
           $ErrorActionPreference = 'Stop'
           $gitdir = "$HOME/.dotfiles-bootstrap"
@@ -180,13 +176,14 @@ jobs:
 
           # Run the tracked script with its real checkout/.bak logic, but point
           # it at a fresh git-dir and skip the `. $PROFILE` reload. We run a
-          # tweaked copy: same body, git-dir redirected, profile reload dropped.
+          # tweaked copy: same body, git-dir redirected, profile reload dropped —
+          # and pass -Repo/-Branch explicitly (non-interactive, no prompt).
           Write-Host "[validate-timer] run real bootstrap.ps1 against synthetic remote -> $gitdir"
           $src = Get-Content "$env:GITHUB_WORKSPACE/.dotfiles/bootstrap.ps1" -Raw
           $src = $src -replace '\$HOME/\.dotfiles', $gitdir
           $src = $src -replace '(?m)^\. \$PROFILE.*$', 'Write-Host "[bootstrap] (profile reload skipped in CI)"'
           Set-Content -Path "$env:RUNNER_TEMP/bootstrap-ci.ps1" -Value $src
-          & pwsh "$env:RUNNER_TEMP/bootstrap-ci.ps1"
+          & pwsh "$env:RUNNER_TEMP/bootstrap-ci.ps1" -Repo C:\dotfiles-remote.git -Branch master
           if ($LASTEXITCODE -ne 0) { throw "bootstrap.ps1 exited $LASTEXITCODE" }
 
           Write-Host "[validate-timer] assert clean checkout (no pending changes)"
