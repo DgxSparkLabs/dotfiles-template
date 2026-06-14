@@ -317,59 +317,45 @@ For full disaster-recovery automation, see [Restoring a machine from scratch](#r
 
 ## Restoring a machine from scratch
 
-The `dotfiles` alias lives in your profile — which hasn't been restored yet. Define it temporarily first, then check out your machine's branch (which restores the profile):
+The `dotfiles` alias lives in your profile — which hasn't been restored yet. The tracked bootstrap scripts define it temporarily, clone your bare repo, then check out your machine's branch (which restores the profile). They live in your repo at [`.dotfiles/bootstrap.sh`](.dotfiles/bootstrap.sh) and [`.dotfiles/bootstrap.ps1`](.dotfiles/bootstrap.ps1).
+
+Both take the repo URL and (optionally) the branch as **command-line parameters**:
+
+| Parameter | Required | Default |
+| --- | --- | --- |
+| repo (`--repo` / `-Repo`) | yes (fails fast if missing) | — |
+| branch (`--branch` / `-Branch`) | no | auto-detected machine name, **confirmed interactively** — Linux `/sys/class/dmi/id/board_name`, WSL → `WSL`, Windows `(Get-WmiObject Win32_BaseBoard).product`, else hostname |
+| auto-accept (`-y` / `--yes` / `-Yes`) | no | off — when set, auto-accepts the auto-detected branch without prompting |
+
+If you don't pass a branch, the script auto-detects this machine's name and asks you to confirm it (press Enter) or type a different branch before applying. In a non-interactive context (no TTY, e.g. CI) it errors and tells you to pass the branch explicitly, rather than hanging on the prompt. Input comes only from command-line arguments — there are no environment-variable fallbacks.
+
+Branch resolution follows this precedence: an explicit `--branch`/`-Branch` always wins; otherwise with `-y`/`--yes` (`-Yes` on PowerShell) the script auto-accepts the auto-detected machine name **without prompting** (and without the non-interactive error); otherwise on an interactive terminal it prompts; otherwise (no branch, no `-y`, no TTY) it errors and exits. Use `-y` for unattended/scripted setup on a machine whose detected name is already the branch you want — it skips the confirmation while staying argument-only.
+
+On a fresh machine you only have the script (copy it over, or fetch it from your repo's web UI). Run:
+
+**Bash / WSL / Linux:**
 
 ```bash
-#!/bin/bash
-# bootstrap.sh — run once on a fresh machine
-REPO="git@github.com:<YOU>/dotfiles.git"
-BRANCH="<machine-name>"
-
-git clone --bare "$REPO" "$HOME/.dotfiles"
-alias dotfiles='git --git-dir=$HOME/.dotfiles/ --work-tree=$HOME'
-dotfiles config --local status.showUntrackedFiles no
-
-# Back up any conflicting OS defaults, then checkout
-dotfiles checkout "$BRANCH" -- . 2>/dev/null || {
-  dotfiles checkout "$BRANCH" 2>&1 | grep $'^\t' | while IFS= read -r file; do
-    file="${file#$'\t'}"
-    [ -e "$HOME/$file" ] && mv "$HOME/$file" "$HOME/$file.bak"
-  done
-  dotfiles checkout "$BRANCH" -- .
-}
-
-exec $SHELL
+bash bootstrap.sh --repo git@github.com:<YOU>/dotfiles.git
+# you'll be asked to confirm the detected branch, or:
+bash bootstrap.sh --repo git@github.com:<YOU>/dotfiles.git --branch my-laptop
+# auto-accept the detected branch (no prompt):
+bash bootstrap.sh --repo git@github.com:<YOU>/dotfiles.git -y
+# positional form also works:
+bash bootstrap.sh git@github.com:<YOU>/dotfiles.git my-laptop
 ```
 
-Save this as `bootstrap.sh` in your repo and run it with `bash bootstrap.sh` on any new or reset machine.
-
-**PowerShell (`bootstrap.ps1`):**
+**PowerShell (Windows):**
 
 ```powershell
-# bootstrap.ps1 — run once on a fresh machine
-$REPO = "git@github.com:<YOU>/dotfiles.git"
-$BRANCH = "<machine-name>"
-
-git clone --bare $REPO "$HOME/.dotfiles"
-function dotfiles { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" @args }
-dotfiles config --local status.showUntrackedFiles no
-
-# Back up any conflicting OS defaults, then checkout
-dotfiles checkout $BRANCH -- . 2>$null
-if ($LASTEXITCODE -ne 0) {
-    dotfiles checkout $BRANCH 2>&1 | Where-Object { $_ -match "^\t" } | ForEach-Object {
-        $file = $_.Trim()
-        if (Test-Path "$HOME\$file") {
-            Move-Item "$HOME\$file" "$HOME\$file.bak" -Force
-        }
-    }
-    dotfiles checkout $BRANCH -- .
-}
-
-. $PROFILE
+pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git
+# you'll be asked to confirm the detected branch, or:
+pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git -Branch my-laptop
+# auto-accept the detected branch (no prompt):
+pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git -y
 ```
 
-Run with `pwsh bootstrap.ps1` on any new or reset Windows machine.
+Conflicting OS-default files are backed up to `*.bak` before checkout, so nothing is lost. After checkout the scripts set `status.showUntrackedFiles no`. Open a new shell (or reload your profile) so the `dotfiles` wrapper is available.
 
 ---
 

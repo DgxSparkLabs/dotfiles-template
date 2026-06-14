@@ -7,5 +7,8 @@
 !dotfiles-timer.sh
 !dotfiles-timer.ps1
 
+!bootstrap.sh
+!bootstrap.ps1
+
 !.githooks/
 !githooks-runner/

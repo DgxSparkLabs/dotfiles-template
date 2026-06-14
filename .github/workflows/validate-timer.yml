@@ -41,6 +41,10 @@ jobs:
       # ── Synthetic bare repo: local fake remote so push works without creds ─
       # macOS is Unix → reuses the exact Linux bash setup (only the temp path differs,
       # and /tmp exists on macOS too), so we gate on "not Windows".
+      # NOTE: deprecate once bootstrap is proven. This inline checkout duplicates
+      # what .dotfiles/bootstrap.{sh,ps1} now do; the dedicated bootstrap step
+      # below exercises the real scripts. Keep both until the bootstrap step has
+      # been green across a few runs, then collapse this into the bootstrap call.
       - name: Set up synthetic bare dotfiles repo (Linux/macOS)
         if: runner.os == 'Linux' || runner.os == 'macOS'
         run: |
@@ -62,6 +66,12 @@ jobs:
           git init --bare /tmp/dotfiles-remote.git
           echo "[validate-timer] push workspace HEAD -> /tmp/dotfiles-remote.git refs/heads/master"
           git -C "$GITHUB_WORKSPACE" push /tmp/dotfiles-remote.git "HEAD:refs/heads/master"
+          # A machine uses its OWN branch, never the shared master baseline. Push a
+          # distinct machine branch ("ci-machine") so the bootstrap smoke test can
+          # check it out via --branch and prove the argument actually took effect
+          # (a value != master that we can assert on HEAD).
+          echo "[validate-timer] push workspace HEAD -> /tmp/dotfiles-remote.git refs/heads/ci-machine"
+          git -C "$GITHUB_WORKSPACE" push /tmp/dotfiles-remote.git "HEAD:refs/heads/ci-machine"
 
           # README step 2: git clone --bare <remote-url> $HOME/.dotfiles
           echo "[validate-timer] git clone --bare /tmp/dotfiles-remote.git \"\$HOME/.dotfiles\""
@@ -105,6 +115,12 @@ jobs:
           git init --bare C:\dotfiles-remote.git
           Write-Host "[validate-timer] push workspace HEAD -> C:\dotfiles-remote.git refs/heads/master"
           git -C "$ws" push C:\dotfiles-remote.git "HEAD:refs/heads/master"
+          # A machine uses its OWN branch, never the shared master baseline. Push a
+          # distinct machine branch ("ci-machine") so the bootstrap smoke test can
+          # check it out via -Branch and prove the argument actually took effect
+          # (a value != master that we can assert on HEAD).
+          Write-Host "[validate-timer] push workspace HEAD -> C:\dotfiles-remote.git refs/heads/ci-machine"
+          git -C "$ws" push C:\dotfiles-remote.git "HEAD:refs/heads/ci-machine"
 
           # README step 2: git clone --bare <remote-url> $HOME/.dotfiles
           Write-Host "[validate-timer] git clone --bare C:\dotfiles-remote.git `"$HOME/.dotfiles`""
@@ -123,6 +139,200 @@ jobs:
           Write-Host "[validate-timer] dotfiles push -u origin HEAD"
           dotfiles push -u origin HEAD
           Write-Host "[validate-timer] bare repo setup done (Windows)"
+
+      # ── Bootstrap smoke test: run the REAL tracked bootstrap script ────────
+      # Drives .dotfiles/bootstrap.{sh,ps1} against the synthetic remote into a
+      # FRESH git-dir (separate from the inline $HOME/.dotfiles above), asserting
+      # a clean checkout + showUntrackedFiles=no. Two paths are exercised:
+      #   Test 1 (arguments): --repo/--branch ci-machine, fully non-interactive,
+      #     asserting HEAD lands on ci-machine (proves the --branch arg took
+      #     effect — a non-master value distinct from the shared baseline).
+      #   Test 2 (-y):  no --branch, -y auto-accepts the auto-detected machine
+      #     name. We replicate the script's exact detection here, push that name
+      #     as a branch on the synthetic remote, then run with -y and assert HEAD
+      #     lands on the detected name with no prompt/hang — a real end-to-end
+      #     check of the -y auto-accept precedence.
+      - name: Bootstrap smoke test (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # We run a tweaked copy with GITDIR redirected to a fresh dir so the
+          # smoke test does not touch the runner's real dotfiles. The
+          # branch-resolution logic (arguments, -y, prompt, TTY guard) is
+          # preserved verbatim. (The script no longer reloads the shell.)
+          make_ci_copy() {  # $1 = git-dir to use
+            sed -e 's#\$HOME/\.dotfiles#'"$1"'#g' \
+                "$GITHUB_WORKSPACE/.dotfiles/bootstrap.sh"
+          }
+
+          # ── Test 1: ARGUMENTS path (--repo + --branch ci-machine) ──────────
+          GITDIR1="$HOME/.dotfiles-bootstrap"
+          dotfiles1() { git --git-dir="$GITDIR1/" --work-tree="$HOME" "$@"; }
+          echo "[validate-timer] Test 1: bootstrap.sh --branch ci-machine -> $GITDIR1"
+          make_ci_copy "$GITDIR1" > /tmp/bootstrap-ci.sh
+          bash /tmp/bootstrap-ci.sh --repo /tmp/dotfiles-remote.git --branch ci-machine
+
+          echo "[validate-timer] Test 1: assert clean checkout (no pending changes)"
+          test -f "$HOME/.gitignore" || { echo "FAIL: .gitignore not checked out"; exit 1; }
+          test -f "$HOME/.dotfiles/bootstrap.sh" || { echo "FAIL: .dotfiles/bootstrap.sh not checked out"; exit 1; }
+          STATUS=$(dotfiles1 status --porcelain)
+          [ -z "$STATUS" ] || { echo "FAIL: dirty checkout:"; echo "$STATUS"; exit 1; }
+
+          echo "[validate-timer] Test 1: assert showUntrackedFiles=no"
+          VAL=$(dotfiles1 config --local --get status.showUntrackedFiles)
+          [ "$VAL" = "no" ] || { echo "FAIL: showUntrackedFiles=$VAL (expected no)"; exit 1; }
+
+          echo "[validate-timer] Test 1: assert HEAD on ci-machine (--branch took effect)"
+          HEAD1=$(dotfiles1 rev-parse --abbrev-ref HEAD)
+          [ "$HEAD1" = "ci-machine" ] || { echo "FAIL: HEAD=$HEAD1 (expected ci-machine)"; exit 1; }
+          echo "[validate-timer] Test 1 ok (Linux): HEAD=$HEAD1"
+
+          # ── Test 2: -y path (auto-accept auto-detected branch, no --branch) ─
+          # Replicate the script's detect_branch() exactly so we can pre-create
+          # the matching branch on the synthetic remote.
+          if grep -qiE '(microsoft|wsl)' /proc/version 2>/dev/null; then
+            DETECTED="WSL"
+          elif [ -r /sys/class/dmi/id/board_name ]; then
+            DETECTED="$(cat /sys/class/dmi/id/board_name)"
+          else
+            DETECTED="$(hostname)"
+          fi
+          echo "[validate-timer] Test 2: detected branch name = '$DETECTED'"
+          GITDIR2="$HOME/.dotfiles-bootstrap-y"
+          dotfiles2() { git --git-dir="$GITDIR2/" --work-tree="$HOME" "$@"; }
+          make_ci_copy "$GITDIR2" > /tmp/bootstrap-ci-y.sh
+
+          if git check-ref-format --branch "$DETECTED" >/dev/null 2>&1; then
+            # Detected name is a usable branch (the happy end-to-end case): mint it
+            # on the synthetic remote, run -y with NO --branch, assert HEAD lands on
+            # the detected name. </dev/null proves no stdin/prompt is read.
+            echo "[validate-timer] Test 2: push master:$DETECTED onto synthetic remote"
+            git -C "$GITHUB_WORKSPACE" push /tmp/dotfiles-remote.git "HEAD:refs/heads/$DETECTED"
+            echo "[validate-timer] Test 2: bootstrap.sh -y (NO --branch) -> $GITDIR2"
+            bash /tmp/bootstrap-ci-y.sh --repo /tmp/dotfiles-remote.git -y </dev/null
+            echo "[validate-timer] Test 2: assert HEAD on detected branch '$DETECTED' (-y auto-accepted, no prompt)"
+            HEAD2=$(dotfiles2 rev-parse --abbrev-ref HEAD)
+            [ "$HEAD2" = "$DETECTED" ] || { echo "FAIL: HEAD=$HEAD2 (expected $DETECTED)"; exit 1; }
+            echo "[validate-timer] Test 2 ok (Linux, e2e): HEAD=$HEAD2"
+          else
+            # GHA runners report a board_name with a space (e.g. "Virtual
+            # Machine") which is not a valid single git ref, so we can't mint that
+            # branch. Per the PR note, we still prove the two things that matter
+            # for -y: (1) it is fully NON-INTERACTIVE (run with </dev/null; if -y
+            # didn't short-circuit the prompt it would either hit the no-TTY error
+            # or block on read), and (2) it RESOLVES TO THE DETECTED NAME — the
+            # script announces "auto-accepting detected branch: <name>" on stderr,
+            # which we assert equals $DETECTED. The clone then fails on the
+            # space-y branch (expected) without ever prompting.
+            echo "[validate-timer] Test 2: detected name not a valid git ref; assert -y is non-interactive + resolves to it via the script's own resolution log"
+            set +e
+            OUT=$(bash /tmp/bootstrap-ci-y.sh --repo /tmp/dotfiles-remote.git -y </dev/null 2>&1)
+            RC=$?
+            set -e
+            printf '%s\n' "$OUT"
+            echo "$OUT" | grep -qF "auto-accepting detected branch: $DETECTED" \
+              || { echo "FAIL: -y did not resolve to detected name '$DETECTED' non-interactively"; exit 1; }
+            echo "$OUT" | grep -q 'stdin is not a TTY' \
+              && { echo "FAIL: -y fell through to the non-interactive prompt guard (did not auto-accept)"; exit 1; }
+            [ "$RC" -ne 0 ] || { echo "FAIL: expected clone to fail on the space-y branch name"; exit 1; }
+            echo "[validate-timer] Test 2 ok (Linux, non-interactive -y resolves to '$DETECTED'; clone failed on space-y ref as expected)"
+          fi
+          echo "[validate-timer] bootstrap smoke test ok (Linux)"
+
+      - name: Bootstrap smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          # We run a tweaked copy with git-dir redirected to a fresh dir so the
+          # smoke test does not touch the runner's real dotfiles. The
+          # branch-resolution logic (-Branch, -y, prompt, interactive guard) is
+          # preserved verbatim. (The script no longer reloads the profile.)
+          function Make-CiCopy([string]$gitdir, [string]$dest) {
+            $src = Get-Content "$env:GITHUB_WORKSPACE/.dotfiles/bootstrap.ps1" -Raw
+            $src = $src -replace '\$HOME/\.dotfiles', $gitdir
+            Set-Content -Path $dest -Value $src
+          }
+
+          # ── Test 1: ARGUMENTS path (-Repo + -Branch ci-machine) ────────────
+          $gitdir1 = "$HOME/.dotfiles-bootstrap"
+          function dotfiles1 { git --git-dir="$gitdir1/" --work-tree="$HOME" @args }
+          Write-Host "[validate-timer] Test 1: bootstrap.ps1 -Branch ci-machine -> $gitdir1"
+          Make-CiCopy $gitdir1 "$env:RUNNER_TEMP/bootstrap-ci.ps1"
+          & pwsh "$env:RUNNER_TEMP/bootstrap-ci.ps1" -Repo C:\dotfiles-remote.git -Branch ci-machine
+          if ($LASTEXITCODE -ne 0) { throw "bootstrap.ps1 exited $LASTEXITCODE" }
+
+          Write-Host "[validate-timer] Test 1: assert clean checkout (no pending changes)"
+          if (-not (Test-Path "$HOME/.gitignore")) { throw "FAIL: .gitignore not checked out" }
+          if (-not (Test-Path "$HOME/.dotfiles/bootstrap.ps1")) { throw "FAIL: .dotfiles/bootstrap.ps1 not checked out" }
+          $status = dotfiles1 status --porcelain
+          if ($status) { throw "FAIL: dirty checkout:`n$status" }
+
+          Write-Host "[validate-timer] Test 1: assert showUntrackedFiles=no"
+          $val = dotfiles1 config --local --get status.showUntrackedFiles
+          if ($val -ne 'no') { throw "FAIL: showUntrackedFiles=$val (expected no)" }
+
+          Write-Host "[validate-timer] Test 1: assert HEAD on ci-machine (-Branch took effect)"
+          $head1 = (dotfiles1 rev-parse --abbrev-ref HEAD).Trim()
+          if ($head1 -ne 'ci-machine') { throw "FAIL: HEAD=$head1 (expected ci-machine)" }
+          Write-Host "[validate-timer] Test 1 ok (Windows): HEAD=$head1"
+
+          # ── Test 2: -y path (auto-accept auto-detected branch, no -Branch) ─
+          # Replicate the script's Get-MachineBranch exactly so we can pre-create
+          # the matching branch on the synthetic remote.
+          $detected = $null
+          try {
+            $product = (Get-WmiObject Win32_BaseBoard -ErrorAction Stop).product
+            if ($product) { $detected = $product.Trim() }
+          } catch { }
+          if (-not $detected) { $detected = $env:COMPUTERNAME }
+          Write-Host "[validate-timer] Test 2: detected branch name = '$detected'"
+          $gitdir2 = "$HOME/.dotfiles-bootstrap-y"
+          function dotfiles2 { git --git-dir="$gitdir2/" --work-tree="$HOME" @args }
+          Make-CiCopy $gitdir2 "$env:RUNNER_TEMP/bootstrap-ci-y.ps1"
+
+          git check-ref-format --branch "$detected" 2>$null | Out-Null
+          $validRef = ($LASTEXITCODE -eq 0)
+          # On the GHA Windows host [Environment]::UserInteractive is true, so
+          # WITHOUT -y this would hit Read-Host and block. We pipe $null to stdin
+          # so any stray prompt fails fast instead of hanging; -y must
+          # short-circuit the prompt entirely and resolve to $detected.
+          if ($validRef) {
+            # Happy end-to-end case: mint the detected branch, run -y with NO
+            # -Branch, assert HEAD lands on it.
+            Write-Host "[validate-timer] Test 2: push master:$detected onto synthetic remote"
+            git -C "$env:GITHUB_WORKSPACE" push C:\dotfiles-remote.git "HEAD:refs/heads/$detected"
+            if ($LASTEXITCODE -ne 0) { throw "push of detected branch failed (exit $LASTEXITCODE)" }
+            Write-Host "[validate-timer] Test 2: bootstrap.ps1 -y (NO -Branch) -> $gitdir2"
+            $null | & pwsh "$env:RUNNER_TEMP/bootstrap-ci-y.ps1" -Repo C:\dotfiles-remote.git -y
+            if ($LASTEXITCODE -ne 0) { throw "bootstrap.ps1 -y exited $LASTEXITCODE" }
+            Write-Host "[validate-timer] Test 2: assert HEAD on detected branch '$detected' (-y auto-accepted, no prompt)"
+            $head2 = (dotfiles2 rev-parse --abbrev-ref HEAD).Trim()
+            if ($head2 -ne $detected) { throw "FAIL: HEAD=$head2 (expected $detected)" }
+            Write-Host "[validate-timer] Test 2 ok (Windows, e2e): HEAD=$head2"
+          }
+          else {
+            # GHA runners report a board_name with a space (e.g. "Virtual
+            # Machine"), not a valid single git ref. Per the PR note we still prove
+            # -y is (1) NON-INTERACTIVE and (2) RESOLVES TO THE DETECTED NAME: the
+            # script announces "auto-accepting detected branch: <name>", which we
+            # assert equals $detected. The clone then fails on the space-y branch
+            # (expected) without ever prompting.
+            Write-Host "[validate-timer] Test 2: detected name not a valid git ref; assert -y is non-interactive + resolves to it via the script's own resolution log"
+            $out = ($null | & pwsh "$env:RUNNER_TEMP/bootstrap-ci-y.ps1" -Repo C:\dotfiles-remote.git -y 2>&1 | Out-String)
+            Write-Host $out
+            if ($out -notmatch [regex]::Escape("auto-accepting detected branch: $detected")) {
+              throw "FAIL: -y did not resolve to detected name '$detected' non-interactively"
+            }
+            if ($out -match 'host is non-interactive') {
+              throw "FAIL: -y fell through to the non-interactive guard (did not auto-accept)"
+            }
+            Write-Host "[validate-timer] Test 2 ok (Windows, non-interactive -y resolves to '$detected'; clone failed on space-y ref as expected)"
+          }
+          Write-Host "[validate-timer] bootstrap smoke test ok (Windows)"
 
       # ── README "Git hooks (optional)": uv sync + core.hooksPath + smoke test ─
       - name: Set up git hooks (Linux/macOS)
