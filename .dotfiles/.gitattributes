@@ -8,3 +8,7 @@ githooks-runner/**/*.py text eol=lf
 githooks-runner/pyproject.toml text eol=lf
 githooks-runner/uv.lock text eol=lf
 dotfiles-update.sh text eol=lf
+
+# POSIX-ish completion scripts must stay LF for bash/zsh on Windows.
+completions/*.bash text eol=lf
+completions/*.zsh text eol=lf

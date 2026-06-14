@@ -18,3 +18,5 @@
 
 !.githooks/
 !githooks-runner/
+
+!completions/

@@ -1,0 +1,58 @@
+name: Validate Shell Completions
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── bash: syntax-check the bash completion ───────────────────────────
+      - name: Parse-check bash completion
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "[validate-completions] bash -n dotfiles.bash"
+          bash -n .dotfiles/completions/dotfiles.bash
+
+      # ── zsh: syntax-check the zsh completion (only where zsh is present) ──
+      - name: Parse-check zsh completion
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v zsh >/dev/null 2>&1; then
+            echo "[validate-completions] zsh -n dotfiles.zsh"
+            zsh -n .dotfiles/completions/dotfiles.zsh
+          else
+            echo "[validate-completions] zsh not present — skipping"
+          fi
+
+      # ── pwsh: parse + dot-source the PowerShell completion ───────────────
+      - name: Parse-check pwsh completion
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = '.dotfiles/completions/dotfiles.ps1'
+          Write-Host "[validate-completions] parse $path"
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $path), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors -and $errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+          Write-Host "[validate-completions] dot-source $path"
+          . $path
+          Write-Host "[validate-completions] OK"

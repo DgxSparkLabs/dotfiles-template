@@ -285,6 +285,33 @@ dotfiles-doctor -GitDir C:\path\to\repo -WorkTree C:\path\to\home    # PowerShel
 
 Use `--skip-network` / `-SkipNetwork` when offline or when the SSH agent is locked — otherwise the reachability check would false-FAIL.
 
+### Shell completion (optional)
+
+Tab-completion for the wrappers lives in `.dotfiles/completions/`. `dotfiles` completes exactly like `git`; `dotfiles-timer` completes its verbs (`install`, `reinstall`, `enable`, `disable`, `start`, `stop`, `status`, `logs`, `uninstall`, `remove`) and the add-all flags (`--all`/`-A` on Linux, `-AddAll` on Windows); `dotfiles-update` completes `--auto` and `dotfiles-doctor` completes `--skip-network`.
+
+Source the file for your shell **after** defining the wrapper alias/function:
+
+**Bash** (`~/.bashrc`):
+
+```bash
+source "$HOME/.dotfiles/completions/dotfiles.bash"
+```
+
+**Zsh** (`~/.zshrc`, after `compinit`):
+
+```zsh
+fpath+=("$HOME/.dotfiles/completions")
+source "$HOME/.dotfiles/completions/dotfiles.zsh"
+```
+
+**PowerShell** (`$PROFILE`):
+
+```powershell
+. "$HOME\.dotfiles\completions\dotfiles.ps1"
+```
+
+> **Prereq for `dotfiles` git completion.** `dotfiles` reuses git's own completion: bash needs git's bash-completion script loaded (so `__git_complete`/`__git_main` exist); zsh needs `_git`; PowerShell needs git's completer (e.g. [posh-git](https://github.com/dahlbyk/posh-git) or recent Git for Windows). If that script isn't present the `dotfiles` completion silently no-ops — the timer/update/doctor completions still work.
+
 ### Submodules (optional)
 
 > ⚠️ **Known limitation:** submodule operations (`add`, `init`, `update`) don't always compose cleanly with the bare-repo `--git-dir`/`--work-tree` pattern — a long-standing git issue. The instructions below work for many users but may fail on some git versions. If you hit errors, alternatives include committing the files directly or using a tool like `chezmoi` that has first-class submodule support.
