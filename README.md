@@ -294,8 +294,11 @@ Both take the repo URL and (optionally) the branch as **command-line parameters*
 | --- | --- | --- |
 | repo (`--repo` / `-Repo`) | yes (fails fast if missing) | — |
 | branch (`--branch` / `-Branch`) | no | auto-detected machine name, **confirmed interactively** — Linux `/sys/class/dmi/id/board_name`, WSL → `WSL`, Windows `(Get-WmiObject Win32_BaseBoard).product`, else hostname |
+| auto-accept (`-y` / `--yes` / `-Yes`) | no | off — when set, auto-accepts the auto-detected branch without prompting |
 
 If you don't pass a branch, the script auto-detects this machine's name and asks you to confirm it (press Enter) or type a different branch before applying. In a non-interactive context (no TTY, e.g. CI) it errors and tells you to pass the branch explicitly, rather than hanging on the prompt. Input comes only from command-line arguments — there are no environment-variable fallbacks.
+
+Branch resolution follows this precedence: an explicit `--branch`/`-Branch` always wins; otherwise with `-y`/`--yes` (`-Yes` on PowerShell) the script auto-accepts the auto-detected machine name **without prompting** (and without the non-interactive error); otherwise on an interactive terminal it prompts; otherwise (no branch, no `-y`, no TTY) it errors and exits. Use `-y` for unattended/scripted setup on a machine whose detected name is already the branch you want — it skips the confirmation while staying argument-only.
 
 On a fresh machine you only have the script (copy it over, or fetch it from your repo's web UI). Run:
 
@@ -305,6 +308,8 @@ On a fresh machine you only have the script (copy it over, or fetch it from your
 bash bootstrap.sh --repo git@github.com:<YOU>/dotfiles.git
 # you'll be asked to confirm the detected branch, or:
 bash bootstrap.sh --repo git@github.com:<YOU>/dotfiles.git --branch my-laptop
+# auto-accept the detected branch (no prompt):
+bash bootstrap.sh --repo git@github.com:<YOU>/dotfiles.git -y
 # positional form also works:
 bash bootstrap.sh git@github.com:<YOU>/dotfiles.git my-laptop
 ```
@@ -315,6 +320,8 @@ bash bootstrap.sh git@github.com:<YOU>/dotfiles.git my-laptop
 pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git
 # you'll be asked to confirm the detected branch, or:
 pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git -Branch my-laptop
+# auto-accept the detected branch (no prompt):
+pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git -y
 ```
 
 Conflicting OS-default files are backed up to `*.bak` before checkout, so nothing is lost. After checkout the scripts set `status.showUntrackedFiles no` and reload your shell.

@@ -9,20 +9,27 @@
 #   -Branch <name>  (optional) branch to check out. If omitted, the machine name
 #                   is auto-detected and you are prompted to confirm it or type
 #                   a different branch.
+#   -y / -Yes       (optional) auto-accept the auto-detected branch without
+#                   prompting (useful for non-interactive / scripted setup).
 #
 # Usage:
 #   pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git
 #   pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git -Branch my-laptop
+#   pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git -y
 #
-# When no branch is given the script auto-detects this machine's name and asks
-# you to confirm it (or type another branch). In a non-interactive context
-# (no interactive host, e.g. CI), pass -Branch explicitly — the script errors
-# instead of hanging on the prompt.
+# Branch resolution precedence:
+#   1. explicit -Branch <name> always wins.
+#   2. else with -y/-Yes, auto-accept the auto-detected machine name without
+#      prompting (and without the non-interactive error).
+#   3. else if the host is interactive, prompt to confirm or override.
+#   4. else (no branch, no -Yes, non-interactive) error and exit 1.
 
 param(
     [Parameter(Mandatory = $true)]
     [string]$Repo,
-    [string]$Branch
+    [string]$Branch,
+    [Alias('y')]
+    [switch]$Yes
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,14 +55,22 @@ function Get-MachineBranch {
 
 if (-not $branchProvided) {
     $detected = Get-MachineBranch
-    # Non-interactive guard: never hang waiting on a prompt (e.g. in CI).
-    if (-not [Environment]::UserInteractive) {
-        Write-Error "bootstrap.ps1: no branch given and the host is non-interactive; cannot prompt. Pass the branch explicitly, e.g. -Branch $detected"
+    if ($Yes) {
+        # -y/-Yes: auto-accept the detected name without prompting (and without
+        # the non-interactive error below).
+        $Branch = $detected
+        Write-Host "bootstrap.ps1: -y given, auto-accepting detected branch: $detected"
+    }
+    elseif (-not [Environment]::UserInteractive) {
+        # Non-interactive guard: never hang waiting on a prompt (e.g. in CI).
+        Write-Error "bootstrap.ps1: no branch given and the host is non-interactive; cannot prompt. Pass the branch explicitly (-Branch $detected) or use -y to auto-accept it."
         exit 1
     }
-    Write-Host "Detected machine branch: $detected"
-    $reply = Read-Host "Press Enter to use it, or type a different branch name"
-    if ($reply) { $Branch = $reply } else { $Branch = $detected }
+    else {
+        Write-Host "Detected machine branch: $detected"
+        $reply = Read-Host "Press Enter to use it, or type a different branch name"
+        if ($reply) { $Branch = $reply } else { $Branch = $detected }
+    }
 }
 
 Write-Host "bootstrap.ps1: repo=$Repo branch=$Branch"
@@ -80,5 +95,11 @@ if ($LASTEXITCODE -ne 0) {
     }
     dotfiles checkout $Branch -- .
 }
+
+# The pathspec checkout above restores the work tree + index from the branch but
+# leaves HEAD on the bare clone's default branch. Point HEAD at this machine's
+# branch so the daily workflow (commit/push) lands there. The work tree already
+# matches the branch, so this does not touch any files and status stays clean.
+dotfiles symbolic-ref HEAD "refs/heads/$Branch"
 
 . $PROFILE
