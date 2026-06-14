@@ -333,6 +333,12 @@ jobs:
             Write-Host "[validate-timer] Test 2 ok (Windows, non-interactive -y resolves to '$detected'; clone failed on space-y ref as expected)"
           }
           Write-Host "[validate-timer] bootstrap smoke test ok (Windows)"
+          # In the non-valid-ref else-branch the last native command is the
+          # bootstrap whose clone intentionally fails on the space-y ref (exit
+          # non-zero), captured into $out. We asserted success above, so the
+          # step's outcome must come from the asserts, not that leaked
+          # $LASTEXITCODE; reset it explicitly.
+          exit 0
 
       # ── README "Git hooks (optional)": uv sync + core.hooksPath + smoke test ─
       - name: Set up git hooks (Linux/macOS)
@@ -487,6 +493,10 @@ jobs:
               throw "FAIL: doctor did not report all hard checks PASSED"
           }
           Write-Host "[validate-timer] doctor ok (Windows)"
+          # The last native command run was doctor (& ...). A healthy doctor
+          # exits 0, but the step's success must be driven by the asserts above,
+          # not a leaked $LASTEXITCODE; we asserted success, so exit 0 explicitly.
+          exit 0
 
       # ── README "dotfiles doctor": NEGATIVE tests — bad states are detected ──
       # The positive test above only proves doctor reports all-PASS in a healthy
