@@ -1,76 +1,64 @@
 from __future__ import annotations
-
-import os
-import sys
+import os, sys
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Callable, Final
 
-# All hook filenames we ship as POSIX stubs (parity with common Git + git-p4 hooks).
-HOOK_NAMES: Final[tuple[str, ...]] = (
-    "applypatch-msg",
-    "pre-applypatch",
-    "post-applypatch",
-    "pre-commit",
-    "pre-merge-commit",
-    "prepare-commit-msg",
-    "commit-msg",
-    "post-commit",
-    "pre-rebase",
-    "post-checkout",
-    "post-merge",
-    "post-rewrite",
-    "pre-push",
-    "pre-receive",
-    "update",
-    "post-receive",
-    "post-update",
-    "reference-transaction",
-    "push-to-checkout",
-    "pre-auto-gc",
-    "sendemail-validate",
-    "post-index-change",
-    "p4-changelist",
-    "p4-prepare-changelist",
-    "p4-post-changelist",
-    "p4-pre-submit",
-)
 
-# Hooks where Git commonly passes ref/revision data on stdin (drain so large pipes do not stall).
-STDIN_HOOK_NAMES: Final[frozenset[str]] = frozenset(
-    {
-        "pre-push",
-        "pre-receive",
-        "post-receive",
-        "post-update",
-        "reference-transaction",
-    }
-)
+class Hook(StrEnum):
+    """Value == on-disk hook filename (== argv[0] the stub passes)."""
+    APPLYPATCH_MSG = "applypatch-msg"
+    PRE_APPLYPATCH = "pre-applypatch"
+    POST_APPLYPATCH = "post-applypatch"
+    PRE_COMMIT = "pre-commit"
+    PRE_MERGE_COMMIT = "pre-merge-commit"
+    PREPARE_COMMIT_MSG = "prepare-commit-msg"
+    COMMIT_MSG = "commit-msg"
+    POST_COMMIT = "post-commit"
+    PRE_REBASE = "pre-rebase"
+    POST_CHECKOUT = "post-checkout"
+    POST_MERGE = "post-merge"
+    POST_REWRITE = "post-rewrite"
+    PRE_PUSH = "pre-push"
+    PRE_RECEIVE = "pre-receive"
+    UPDATE = "update"
+    POST_RECEIVE = "post-receive"
+    POST_UPDATE = "post-update"
+    REFERENCE_TRANSACTION = "reference-transaction"
+    PUSH_TO_CHECKOUT = "push-to-checkout"
+    PRE_AUTO_GC = "pre-auto-gc"
+    SENDEMAIL_VALIDATE = "sendemail-validate"
+    POST_INDEX_CHANGE = "post-index-change"
+    P4_CHANGELIST = "p4-changelist"
+    P4_PREPARE_CHANGELIST = "p4-prepare-changelist"
+    P4_POST_CHANGELIST = "p4-post-changelist"
+    P4_PRE_SUBMIT = "p4-pre-submit"
+
+
+STDIN_HOOK_NAMES: Final[frozenset[Hook]] = frozenset({
+    Hook.PRE_PUSH, Hook.PRE_RECEIVE, Hook.POST_RECEIVE, Hook.POST_UPDATE, Hook.REFERENCE_TRANSACTION})
 
 
 @dataclass
 class HookContext:
-    hook_name: str
+    hook_name: Hook
     argv: list[str]
 
 
 HookFn = Callable[[HookContext], int]
 
 
-def log_hook(hook_name: str, *, msg: str | None = None) -> None:
+def log_hook(hook_name, *, msg: str | None = None) -> None:
+    # NEVER use !r/repr — CI greps the literal "[dotfiles_githooks] pre-commit".
     line = f"[dotfiles_githooks] {hook_name}"
     if msg:
         line = f"{line}: {msg}"
     print(line, file=sys.stderr)
 
 
-def drain_stdin_if_needed(hook_name: str) -> None:
-    if hook_name not in STDIN_HOOK_NAMES:
+def drain_stdin_if_needed(hook_name: Hook) -> None:
+    if hook_name not in STDIN_HOOK_NAMES or sys.stdin is None or sys.stdin.isatty():
         return
-    if sys.stdin is None:
-        return
-    if sys.stdin.isatty():
-        return
-    # Consume stdin so Git does not block waiting for the hook to read (server/client hooks).
     try:
         sys.stdin.read()
     except OSError:
@@ -82,11 +70,3 @@ def hook_default(ctx: HookContext) -> int:
         log_hook(ctx.hook_name)
     drain_stdin_if_needed(ctx.hook_name)
     return 0
-
-
-def build_dispatch() -> dict[str, HookFn]:
-    # Single implementation for every shipped hook; specialize individual hooks later.
-    d: dict[str, HookFn] = {}
-    for name in HOOK_NAMES:
-        d[name] = hook_default
-    return d

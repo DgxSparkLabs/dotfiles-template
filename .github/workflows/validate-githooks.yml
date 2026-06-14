@@ -44,3 +44,60 @@ jobs:
           sh "$GITHUB_WORKSPACE/.dotfiles/.githooks/pre-commit" 2>&1 \
             | tee "$RUNNER_TEMP/githooks-pre-commit.log" >/dev/null
           grep -q '\[dotfiles_githooks\] pre-commit' "$RUNNER_TEMP/githooks-pre-commit.log"
+
+      - name: Registry — user handler fires WITHOUT re-running uv sync
+        working-directory: .dotfiles/githooks-runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          # uv sync already ran in the first step; do NOT re-sync here.
+          cat > dotfiles_githooks/user_hooks.py <<'PY'
+          from dotfiles_githooks.names import Hook, HookContext
+          from dotfiles_githooks.registry import hook
+
+          @hook(Hook.PRE_COMMIT)
+          def _h(ctx: HookContext) -> int:
+              print("USER_HOOK_FIRED", flush=True)
+              return 0
+          PY
+          uv run --no-sync python -m dotfiles_githooks pre-commit 2>&1 \
+            | tee "$RUNNER_TEMP/githooks-user.log" >/dev/null
+          grep -q 'USER_HOOK_FIRED' "$RUNNER_TEMP/githooks-user.log"
+          rm -f dotfiles_githooks/user_hooks.py
+
+      - name: Registry — absent user_hooks is a no-op (exit 0)
+        working-directory: .dotfiles/githooks-runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -f dotfiles_githooks/user_hooks.py
+          uv run --no-sync python -m dotfiles_githooks pre-commit
+          DOTFILES_GITHOOKS_VERBOSE=1 uv run --no-sync python -m dotfiles_githooks pre-commit 2>&1 \
+            | tee "$RUNNER_TEMP/githooks-noop.log" >/dev/null
+          grep -q '\[dotfiles_githooks\] pre-commit' "$RUNNER_TEMP/githooks-noop.log"
+
+      - name: Registry — duplicate handler raises (non-zero)
+        working-directory: .dotfiles/githooks-runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > dotfiles_githooks/user_hooks.py <<'PY'
+          from dotfiles_githooks.names import Hook, HookContext
+          from dotfiles_githooks.registry import hook
+
+          @hook(Hook.PRE_COMMIT)
+          def _a(ctx: HookContext) -> int:
+              return 0
+
+          @hook(Hook.PRE_COMMIT)
+          def _b(ctx: HookContext) -> int:
+              return 0
+          PY
+          if uv run --no-sync python -m dotfiles_githooks pre-commit 2>&1 \
+              | tee "$RUNNER_TEMP/githooks-dup.log" >/dev/null; then
+            echo "expected non-zero exit on duplicate handler" >&2
+            rm -f dotfiles_githooks/user_hooks.py
+            exit 1
+          fi
+          grep -q 'only one handler per hook is allowed' "$RUNNER_TEMP/githooks-dup.log"
+          rm -f dotfiles_githooks/user_hooks.py
