@@ -9,24 +9,26 @@
 # locked SSH agent would otherwise false-FAIL).
 
 param(
+    [string]$GitDir = "$HOME\.dotfiles",
+    [string]$WorkTree = "$HOME",
     [switch]$SkipNetwork,
     [switch]$Help
 )
 
-$GitDir    = if ($env:DOTFILES_GIT_DIR)   { $env:DOTFILES_GIT_DIR }   else { "$HOME\.dotfiles" }
-$WorkTree  = if ($env:DOTFILES_WORK_TREE) { $env:DOTFILES_WORK_TREE } else { "$HOME" }
 $HooksPath = "$GitDir\.githooks"
 $RunnerDir = "$GitDir\githooks-runner"
 $TimerPs1  = "$GitDir\dotfiles-timer.ps1"
 
 if ($Help) {
     Write-Output @"
-Usage: pwsh dotfiles-doctor.ps1 [-SkipNetwork]
+Usage: pwsh dotfiles-doctor.ps1 [-GitDir <path>] [-WorkTree <path>] [-SkipNetwork]
 
 Runs setup health-checks for the dotfiles bare repo at:
   $GitDir  (work-tree: $WorkTree)
 
-  -SkipNetwork   Omit network/SSH push-reachability checks (offline / locked agent).
+  -GitDir <path>     Override the bare-repo git dir (default: `$HOME\.dotfiles).
+  -WorkTree <path>   Override the work-tree (default: `$HOME).
+  -SkipNetwork       Omit network/SSH push-reachability checks (offline / locked agent).
 
 Prints PASS/FAIL/INFO per check with a fix hint; exits non-zero on any hard FAIL.
 "@

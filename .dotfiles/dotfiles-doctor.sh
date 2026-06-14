@@ -8,31 +8,44 @@
 # Network/SSH reachability is gated behind --skip-network (offline machines or a
 # locked SSH agent would otherwise false-FAIL).
 
-GIT_DIR="${DOTFILES_GIT_DIR:-$HOME/.dotfiles}"
-WORK_TREE="${DOTFILES_WORK_TREE:-$HOME}"
-HOOKS_PATH="$GIT_DIR/.githooks"
-RUNNER_DIR="$GIT_DIR/githooks-runner"
-TIMER_SH="$GIT_DIR/dotfiles-timer.sh"
+GIT_DIR="$HOME/.dotfiles"
+WORK_TREE="$HOME"
 
 SKIP_NETWORK=0
-for _arg in "$@"; do
-  case "$_arg" in
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --git-dir) shift; GIT_DIR=$1 ;;
+    --git-dir=*) GIT_DIR=${1#*=} ;;
+    --work-tree) shift; WORK_TREE=$1 ;;
+    --work-tree=*) WORK_TREE=${1#*=} ;;
     --skip-network) SKIP_NETWORK=1 ;;
     -h|--help)
       cat <<EOF
-Usage: $0 [--skip-network]
+Usage: $0 [--git-dir <path>] [--work-tree <path>] [--skip-network]
 
 Runs setup health-checks for the dotfiles bare repo at:
   $GIT_DIR  (work-tree: $WORK_TREE)
 
-  --skip-network   Omit network/SSH push-reachability checks (offline / locked agent).
+  --git-dir <path>     Override the bare-repo git dir (default: \$HOME/.dotfiles).
+  --work-tree <path>   Override the work-tree (default: \$HOME).
+  --skip-network       Omit network/SSH push-reachability checks (offline / locked agent).
 
 Prints PASS/FAIL/INFO per check with a fix hint; exits non-zero on any hard FAIL.
 EOF
       exit 0
       ;;
+    *)
+      printf 'dotfiles-doctor: unknown argument: %s\n' "$1" >&2
+      printf 'Try --help for usage.\n' >&2
+      exit 2
+      ;;
   esac
+  shift
 done
+
+HOOKS_PATH="$GIT_DIR/.githooks"
+RUNNER_DIR="$GIT_DIR/githooks-runner"
+TIMER_SH="$GIT_DIR/dotfiles-timer.sh"
 
 dotfiles() { git --git-dir="$GIT_DIR" --work-tree="$WORK_TREE" "$@"; }
 

@@ -276,6 +276,13 @@ dotfiles-doctor --skip-network   # Bash/Zsh: omit the network/SSH reachability c
 dotfiles-doctor -SkipNetwork     # PowerShell: omit the network/SSH reachability check
 ```
 
+The git dir and work-tree default to `$HOME/.dotfiles` and `$HOME`. Override them with arguments if your setup differs:
+
+```text
+dotfiles-doctor --git-dir /path/to/repo --work-tree /path/to/home   # Bash/Zsh
+dotfiles-doctor -GitDir C:\path\to\repo -WorkTree C:\path\to\home    # PowerShell
+```
+
 Use `--skip-network` / `-SkipNetwork` when offline or when the SSH agent is locked — otherwise the reachability check would false-FAIL.
 
 ### Submodules (optional)
