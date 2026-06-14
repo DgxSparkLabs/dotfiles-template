@@ -1,8 +1,9 @@
 from __future__ import annotations
+import importlib, sys
+from .names import Hook, HookContext, hook_default, log_hook
+from .registry import hook as registry
 
-import sys
-
-from .names import HookContext, build_dispatch, log_hook
+_USER_MODULE = "dotfiles_githooks.user_hooks"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -13,21 +14,26 @@ def main(argv: list[str] | None = None) -> int:
     return _run_hook(argv)
 
 
-def _run_hook(argv: list[str]) -> int:
-    hook_name = argv[0]
-    rest = argv[1:]
-    dispatch = build_dispatch()
-    fn = dispatch.get(hook_name)
-    if fn is None:
-        log_hook(hook_name, msg="unknown hook name")
-        return 0
-    ctx = HookContext(hook_name=hook_name, argv=rest)
+def _load_user_hooks() -> None:
     try:
-        return int(fn(ctx))
-    except Exception as e:  # noqa: BLE001 — surface unexpected errors in hooks
-        log_hook(hook_name, msg=f"error: {e}")
+        importlib.import_module(_USER_MODULE)
+    except ModuleNotFoundError as e:
+        if e.name != _USER_MODULE:   # a bad import INSIDE user_hooks must surface
+            raise
+
+
+def _run_hook(argv: list[str]) -> int:
+    raw = argv[0]
+    try:
+        h = Hook(raw)
+    except ValueError:
+        log_hook(raw, msg="unknown hook name")
+        return 0
+    _load_user_hooks()
+    ctx = HookContext(hook_name=h, argv=argv[1:])
+    fn = registry.handler_for(h)
+    try:
+        return int(fn(ctx)) if fn is not None else hook_default(ctx)
+    except Exception as e:  # noqa: BLE001
+        log_hook(h, msg=f"error: {e}")
         return 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
