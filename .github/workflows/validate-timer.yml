@@ -42,7 +42,7 @@ jobs:
       # macOS is Unix → reuses the exact Linux bash setup (only the temp path differs,
       # and /tmp exists on macOS too), so we gate on "not Windows".
       - name: Set up synthetic bare dotfiles repo (Linux/macOS)
-        if: runner.os != 'Windows'
+        if: runner.os == 'Linux' || runner.os == 'macOS'
         run: |
           set -euo pipefail
           git config --global init.defaultBranch master
@@ -126,7 +126,7 @@ jobs:
 
       # ── README "Git hooks (optional)": uv sync + core.hooksPath + smoke test ─
       - name: Set up git hooks (Linux/macOS)
-        if: runner.os != 'Windows'
+        if: runner.os == 'Linux' || runner.os == 'macOS'
         shell: bash
         run: |
           set -euo pipefail
@@ -285,7 +285,7 @@ jobs:
 
       # ── Validate embedded git add mode (-u default, -A after reinstall) ─────
       - name: "Validate .auto-commit embeds git add -u after install (Linux/macOS)"
-        if: runner.os != 'Windows'
+        if: runner.os == 'Linux' || runner.os == 'macOS'
         run: |
           set -euo pipefail
           echo "[validate-timer] check .auto-commit.sh uses git add -u"
@@ -315,7 +315,7 @@ jobs:
 
       # ── Unit test: commit fires when a tracked file changes ──────────────
       - name: "Unit test: commit fires on file change (Linux/macOS)"
-        if: runner.os != 'Windows'
+        if: runner.os == 'Linux' || runner.os == 'macOS'
         run: |
           set -euo pipefail
           dotfiles() { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" "$@"; }
@@ -347,7 +347,7 @@ jobs:
 
       # ── Unit test: no spurious commit when nothing changed ───────────────
       - name: "Unit test: no commit when nothing changed (Linux/macOS)"
-        if: runner.os != 'Windows'
+        if: runner.os == 'Linux' || runner.os == 'macOS'
         run: |
           set -euo pipefail
           dotfiles() { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" "$@"; }
@@ -400,7 +400,7 @@ jobs:
           Write-Host "[validate-timer] reinstall -AddAll ok"
 
       - name: "Validate .auto-commit embeds git add -A after reinstall --all (Linux/macOS)"
-        if: runner.os != 'Windows'
+        if: runner.os == 'Linux' || runner.os == 'macOS'
         run: |
           set -euo pipefail
           echo "[validate-timer] check .auto-commit.sh uses git add -A after reinstall --all"
