@@ -239,6 +239,52 @@ git config --get user.email      # -> <you@example.com>
 
 > The `~/.gitconfig.local` file is **per-machine and untracked** — create it on every machine. If it's missing, git silently skips the include and `user.email` is simply unset, so commits will fail to identify you until you create it.
 
+### Health-check: `dotfiles doctor` (optional)
+
+`dotfiles doctor` runs a battery of setup checks and prints **PASS / FAIL / INFO** with an actionable fix hint for each. It exits non-zero if any hard check fails, so it doubles as a CI/bootstrap gate. It is **pure shell / pwsh** — deliberately *not* run through the `uv` hook runner, so a broken `uv` install is still diagnosable.
+
+Checks performed:
+
+- **uv** is on `PATH`
+- `core.hooksPath` == `~/.dotfiles/.githooks`
+- `status.showUntrackedFiles` == `no`
+- the `githooks-runner` venv is synced
+- the work-tree is clean (no uncommitted tracked changes)
+- `user_hooks.example` / `user_hooks.py` activation state (INFO only)
+- auto-commit timer state (INFO only)
+- remote push/fetch reachability — network + SSH auth (skippable)
+
+Add a `dotfiles-doctor` wrapper to your shell profile (same pattern as the other wrappers):
+
+**Bash / Zsh** (`~/.bashrc` or `~/.zshrc`):
+
+```bash
+alias dotfiles-doctor='bash $HOME/.dotfiles/dotfiles-doctor.sh'
+```
+
+**PowerShell** (`$PROFILE`):
+
+```powershell
+function dotfiles-doctor { pwsh "$HOME\.dotfiles\dotfiles-doctor.ps1" @args }
+```
+
+Then on any platform:
+
+```text
+dotfiles-doctor                  # run all checks
+dotfiles-doctor --skip-network   # Bash/Zsh: omit the network/SSH reachability check
+dotfiles-doctor -SkipNetwork     # PowerShell: omit the network/SSH reachability check
+```
+
+The git dir and work-tree default to `$HOME/.dotfiles` and `$HOME`. Override them with arguments if your setup differs:
+
+```text
+dotfiles-doctor --git-dir /path/to/repo --work-tree /path/to/home   # Bash/Zsh
+dotfiles-doctor -GitDir C:\path\to\repo -WorkTree C:\path\to\home    # PowerShell
+```
+
+Use `--skip-network` / `-SkipNetwork` when offline or when the SSH agent is locked — otherwise the reachability check would false-FAIL.
+
 ### Submodules (optional)
 
 > ⚠️ **Known limitation:** submodule operations (`add`, `init`, `update`) don't always compose cleanly with the bare-repo `--git-dir`/`--work-tree` pattern — a long-standing git issue. The instructions below work for many users but may fail on some git versions. If you hit errors, alternatives include committing the files directly or using a tool like `chezmoi` that has first-class submodule support.
