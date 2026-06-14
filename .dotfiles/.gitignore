@@ -13,5 +13,8 @@
 !dotfiles-update.sh
 !dotfiles-update.ps1
 
+!dotfiles-doctor.sh
+!dotfiles-doctor.ps1
+
 !.githooks/
 !githooks-runner/

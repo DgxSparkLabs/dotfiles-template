@@ -456,6 +456,38 @@ jobs:
           }
           Write-Host "[validate-timer] PASS: [include] of ~/.gitconfig.local resolves (Windows)"
 
+      # ── README "dotfiles doctor": health-check PASSes after full setup ─────
+      - name: "dotfiles doctor --skip-network (Linux)"
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "[validate-timer] dotfiles-doctor.sh --skip-network (expect all hard checks PASS)"
+          out="$(bash "$HOME/.dotfiles/dotfiles-doctor.sh" --skip-network 2>&1)" || {
+            echo "$out"
+            echo "FAIL: doctor exited non-zero after full setup"
+            exit 1
+          }
+          echo "$out"
+          echo "$out" | grep -q 'doctor: all hard checks PASSED' \
+            || { echo "FAIL: doctor did not report all hard checks PASSED"; exit 1; }
+          echo "[validate-timer] doctor ok (Linux)"
+
+      - name: "dotfiles doctor -SkipNetwork (Windows)"
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host "[validate-timer] dotfiles-doctor.ps1 -SkipNetwork (expect all hard checks PASS)"
+          $out = & (Join-Path $env:USERPROFILE '.dotfiles\dotfiles-doctor.ps1') -SkipNetwork 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $out
+          if ($code -ne 0) { throw "FAIL: doctor exited non-zero ($code) after full setup" }
+          if ($out -notmatch 'doctor: all hard checks PASSED') {
+              throw "FAIL: doctor did not report all hard checks PASSED"
+          }
+          Write-Host "[validate-timer] doctor ok (Windows)"
+
       # ── Install ──────────────────────────────────────────────────────────
       - name: Install systemd timer
         if: runner.os == 'Linux'
