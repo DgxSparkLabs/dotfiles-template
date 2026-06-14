@@ -301,6 +301,33 @@ dotfiles merge master
 
 To share a change across all machines: commit it to `master`, push, then run `dotfiles merge master` on each other machine.
 
+### System updates (`dotfiles-update`)
+
+`dotfiles merge master` merges your *local* `master`. To instead pull the latest **system baseline** straight from the remote in one step — fetch `origin/master`, then merge it — use the `dotfiles-update` wrapper. This is the one-way master→machine propagation path: you never edit system files, so the merge is clean. If it *does* conflict (a system file overlaps one you edited), the command prints a loud message, lists the conflicting files, **aborts the merge** (leaving your work-tree clean), and exits non-zero.
+
+It runs manually by default; pass `--auto` (Linux) / `-Auto` (Windows) for unattended use from a scheduled wrapper (same merge semantics).
+
+Add a `dotfiles-update` wrapper to your shell profile (same pattern as `dotfiles-timer`):
+
+**Bash / Zsh** (`~/.bashrc` or `~/.zshrc`):
+
+```bash
+alias dotfiles-update='bash $HOME/.dotfiles/dotfiles-update.sh'
+```
+
+**PowerShell** (`$PROFILE`):
+
+```powershell
+function dotfiles-update { pwsh "$HOME\.dotfiles\dotfiles-update.ps1" @args }
+```
+
+Then on any platform:
+
+```text
+dotfiles-update            # fetch origin/master + merge into this machine's branch
+dotfiles-update --auto     # same, opt-in unattended (Windows: -Auto)
+```
+
 ### Adding another machine
 
 Repeat [Using this template](#using-this-template-no-fork-required) **steps 2–4** on the new machine, picking a new `<machine-name>` in step 3. Step 1 (creating the GitHub repo) only happens once, on your first machine.

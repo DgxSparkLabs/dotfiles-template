@@ -10,5 +10,8 @@
 !bootstrap.sh
 !bootstrap.ps1
 
+!dotfiles-update.sh
+!dotfiles-update.ps1
+
 !.githooks/
 !githooks-runner/
