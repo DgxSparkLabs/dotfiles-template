@@ -286,59 +286,35 @@ For full disaster-recovery automation, see [Restoring a machine from scratch](#r
 
 ## Restoring a machine from scratch
 
-The `dotfiles` alias lives in your profile — which hasn't been restored yet. Define it temporarily first, then check out your machine's branch (which restores the profile):
+The `dotfiles` alias lives in your profile — which hasn't been restored yet. The tracked bootstrap scripts define it temporarily, clone your bare repo, then check out your machine's branch (which restores the profile). They live in your repo at [`.dotfiles/bootstrap.sh`](.dotfiles/bootstrap.sh) and [`.dotfiles/bootstrap.ps1`](.dotfiles/bootstrap.ps1).
+
+Both are parameterized by environment variables:
+
+| Variable | Required | Default |
+| --- | --- | --- |
+| `DOTFILES_REPO` | yes (fails fast if missing) | — |
+| `DOTFILES_BRANCH` | no | auto-detected machine name — Linux `/sys/class/dmi/id/board_name`, WSL → `WSL`, Windows `(Get-WmiObject Win32_BaseBoard).product` |
+
+On a fresh machine you only have the script (copy it over, or fetch it from your repo's web UI). Run:
+
+**Bash / WSL / Linux:**
 
 ```bash
-#!/bin/bash
-# bootstrap.sh — run once on a fresh machine
-REPO="git@github.com:<YOU>/dotfiles.git"
-BRANCH="<machine-name>"
-
-git clone --bare "$REPO" "$HOME/.dotfiles"
-alias dotfiles='git --git-dir=$HOME/.dotfiles/ --work-tree=$HOME'
-dotfiles config --local status.showUntrackedFiles no
-
-# Back up any conflicting OS defaults, then checkout
-dotfiles checkout "$BRANCH" -- . 2>/dev/null || {
-  dotfiles checkout "$BRANCH" 2>&1 | grep $'^\t' | while IFS= read -r file; do
-    file="${file#$'\t'}"
-    [ -e "$HOME/$file" ] && mv "$HOME/$file" "$HOME/$file.bak"
-  done
-  dotfiles checkout "$BRANCH" -- .
-}
-
-exec $SHELL
+DOTFILES_REPO=git@github.com:<YOU>/dotfiles.git bash bootstrap.sh
+# or pin the branch explicitly:
+DOTFILES_REPO=git@github.com:<YOU>/dotfiles.git DOTFILES_BRANCH=my-laptop bash bootstrap.sh
 ```
 
-Save this as `bootstrap.sh` in your repo and run it with `bash bootstrap.sh` on any new or reset machine.
-
-**PowerShell (`bootstrap.ps1`):**
+**PowerShell (Windows):**
 
 ```powershell
-# bootstrap.ps1 — run once on a fresh machine
-$REPO = "git@github.com:<YOU>/dotfiles.git"
-$BRANCH = "<machine-name>"
-
-git clone --bare $REPO "$HOME/.dotfiles"
-function dotfiles { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" @args }
-dotfiles config --local status.showUntrackedFiles no
-
-# Back up any conflicting OS defaults, then checkout
-dotfiles checkout $BRANCH -- . 2>$null
-if ($LASTEXITCODE -ne 0) {
-    dotfiles checkout $BRANCH 2>&1 | Where-Object { $_ -match "^\t" } | ForEach-Object {
-        $file = $_.Trim()
-        if (Test-Path "$HOME\$file") {
-            Move-Item "$HOME\$file" "$HOME\$file.bak" -Force
-        }
-    }
-    dotfiles checkout $BRANCH -- .
-}
-
-. $PROFILE
+$env:DOTFILES_REPO = "git@github.com:<YOU>/dotfiles.git"
+pwsh bootstrap.ps1
+# or pin the branch explicitly:
+$env:DOTFILES_BRANCH = "my-laptop"; pwsh bootstrap.ps1
 ```
 
-Run with `pwsh bootstrap.ps1` on any new or reset Windows machine.
+Conflicting OS-default files are backed up to `*.bak` before checkout, so nothing is lost. After checkout the scripts set `status.showUntrackedFiles no` and reload your shell.
 
 ---
 

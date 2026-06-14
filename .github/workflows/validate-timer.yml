@@ -41,6 +41,10 @@ jobs:
       # ── Synthetic bare repo: local fake remote so push works without creds ─
       # macOS is Unix → reuses the exact Linux bash setup (only the temp path differs,
       # and /tmp exists on macOS too), so we gate on "not Windows".
+      # NOTE: deprecate once bootstrap is proven. This inline checkout duplicates
+      # what .dotfiles/bootstrap.{sh,ps1} now do; the dedicated bootstrap step
+      # below exercises the real scripts. Keep both until the bootstrap step has
+      # been green across a few runs, then collapse this into the bootstrap call.
       - name: Set up synthetic bare dotfiles repo (Linux/macOS)
         if: runner.os == 'Linux' || runner.os == 'macOS'
         run: |
@@ -123,6 +127,78 @@ jobs:
           Write-Host "[validate-timer] dotfiles push -u origin HEAD"
           dotfiles push -u origin HEAD
           Write-Host "[validate-timer] bare repo setup done (Windows)"
+
+      # ── Bootstrap smoke test: run the REAL tracked bootstrap script ────────
+      # Drives .dotfiles/bootstrap.{sh,ps1} against the synthetic remote into a
+      # FRESH git-dir ($HOME/.dotfiles-bootstrap, separate from the inline
+      # $HOME/.dotfiles above), asserting a clean checkout + showUntrackedFiles=no.
+      # DOTFILES_BRANCH=master overrides the machine auto-detection so the
+      # checkout targets the branch we pushed. This is the step that should
+      # replace the inline setup once proven.
+      - name: Bootstrap smoke test (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          DOTFILES_REPO: /tmp/dotfiles-remote.git
+          DOTFILES_BRANCH: master
+        run: |
+          set -euo pipefail
+          GITDIR="$HOME/.dotfiles-bootstrap"
+          dotfiles() { git --git-dir="$GITDIR/" --work-tree="$HOME" "$@"; }
+
+          # Run the tracked script with its real checkout/.bak logic, but point
+          # it at a fresh git-dir and skip the `exec $SHELL` reload (which would
+          # replace the CI step's shell). We source a tweaked copy: same body,
+          # GITDIR redirected, final exec dropped.
+          echo "[validate-timer] run real bootstrap.sh against synthetic remote -> $GITDIR"
+          sed -e 's#\$HOME/\.dotfiles#'"$GITDIR"'#g' \
+              -e 's/^exec .*/echo "[bootstrap] (shell reload skipped in CI)"/' \
+              "$GITHUB_WORKSPACE/.dotfiles/bootstrap.sh" > /tmp/bootstrap-ci.sh
+          bash /tmp/bootstrap-ci.sh
+
+          echo "[validate-timer] assert clean checkout (no pending changes)"
+          test -f "$HOME/.gitignore" || { echo "FAIL: .gitignore not checked out"; exit 1; }
+          test -f "$HOME/.dotfiles/bootstrap.sh" || { echo "FAIL: .dotfiles/bootstrap.sh not checked out"; exit 1; }
+          STATUS=$(dotfiles status --porcelain)
+          [ -z "$STATUS" ] || { echo "FAIL: dirty checkout:"; echo "$STATUS"; exit 1; }
+
+          echo "[validate-timer] assert showUntrackedFiles=no"
+          VAL=$(dotfiles config --local --get status.showUntrackedFiles)
+          [ "$VAL" = "no" ] || { echo "FAIL: showUntrackedFiles=$VAL (expected no)"; exit 1; }
+          echo "[validate-timer] bootstrap smoke test ok (Linux)"
+
+      - name: Bootstrap smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          DOTFILES_REPO: C:\dotfiles-remote.git
+          DOTFILES_BRANCH: master
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $gitdir = "$HOME/.dotfiles-bootstrap"
+          function dotfiles { git --git-dir="$gitdir/" --work-tree="$HOME" @args }
+
+          # Run the tracked script with its real checkout/.bak logic, but point
+          # it at a fresh git-dir and skip the `. $PROFILE` reload. We run a
+          # tweaked copy: same body, git-dir redirected, profile reload dropped.
+          Write-Host "[validate-timer] run real bootstrap.ps1 against synthetic remote -> $gitdir"
+          $src = Get-Content "$env:GITHUB_WORKSPACE/.dotfiles/bootstrap.ps1" -Raw
+          $src = $src -replace '\$HOME/\.dotfiles', $gitdir
+          $src = $src -replace '(?m)^\. \$PROFILE.*$', 'Write-Host "[bootstrap] (profile reload skipped in CI)"'
+          Set-Content -Path "$env:RUNNER_TEMP/bootstrap-ci.ps1" -Value $src
+          & pwsh "$env:RUNNER_TEMP/bootstrap-ci.ps1"
+          if ($LASTEXITCODE -ne 0) { throw "bootstrap.ps1 exited $LASTEXITCODE" }
+
+          Write-Host "[validate-timer] assert clean checkout (no pending changes)"
+          if (-not (Test-Path "$HOME/.gitignore")) { throw "FAIL: .gitignore not checked out" }
+          if (-not (Test-Path "$HOME/.dotfiles/bootstrap.ps1")) { throw "FAIL: .dotfiles/bootstrap.ps1 not checked out" }
+          $status = dotfiles status --porcelain
+          if ($status) { throw "FAIL: dirty checkout:`n$status" }
+
+          Write-Host "[validate-timer] assert showUntrackedFiles=no"
+          $val = dotfiles config --local --get status.showUntrackedFiles
+          if ($val -ne 'no') { throw "FAIL: showUntrackedFiles=$val (expected no)" }
+          Write-Host "[validate-timer] bootstrap smoke test ok (Windows)"
 
       # ── README "Git hooks (optional)": uv sync + core.hooksPath + smoke test ─
       - name: Set up git hooks (Linux/macOS)

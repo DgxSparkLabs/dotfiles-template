@@ -1,3 +1,5 @@
+# POSIX bootstrap script must stay LF for Git-Bash/sh on Windows.
+bootstrap.sh text eol=lf
 # POSIX hook stubs must stay LF for Git-Bash/sh on Windows.
 .githooks/* text eol=lf
 githooks-runner/**/*.py text eol=lf
