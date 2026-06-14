@@ -80,7 +80,11 @@ dotfiles status
 
 ### 3. Create this machine's branch
 
-This template uses **one branch per machine**, with `master` holding shared configs. Pick a short, descriptive name for each machine:
+This template uses **one branch per machine**. `master` is the **system baseline** — the template's portable defaults (the `.gitignore`, the git-hook stubs, the auto-commit timer, the wrapper definitions). It is **not** a shared bucket for your personal content; nothing you add on a machine branch is meant to travel back into `master`.
+
+The flow is **one-way**: `master` → your machine branch, pulled with `dotfiles update`. Your machine branch is where *your* dotfiles live, and they stay there. See [The partition contract](#the-partition-contract-system-vs-user) below for what belongs where.
+
+Pick a short, descriptive name for each machine:
 
 
 | `<machine-name>`                 | Use for                                        |
@@ -210,9 +214,9 @@ Set `DOTFILES_GITHOOKS_VERBOSE=1` to print a line to stderr for every hook invoc
 
 ### Per-machine git identity (optional)
 
-Keep machine-specific identity — your email, signing key — out of the shared config so it can vary per machine while applying to **all** git work. The shared `~/.gitconfig` ends with a plain `[include]` of an untracked, per-machine `~/.gitconfig.local`; each machine sets its own email there (work email on the work laptop, personal at home).
+Keep machine-specific identity — your email, signing key — out of the common config so it can vary per machine while applying to **all** git work. The common/base `~/.gitconfig` ends with a plain `[include]` of an untracked, per-machine `~/.gitconfig.local`; each machine sets its own email there (work email on the work laptop, personal at home).
 
-The repo ships `.dotfiles/gitconfig.example` as the shared base. Copy it to `~/.gitconfig`, then create the per-machine `~/.gitconfig.local`:
+The repo ships `.dotfiles/gitconfig.example` as the common base. Copy it to `~/.gitconfig`, then create the per-machine `~/.gitconfig.local`:
 
 **Bash / Zsh:**
 
@@ -365,18 +369,33 @@ dotfiles commit -m "Unignore ~/bin"
 
 ## Multiple machines
 
-Use one branch per machine, with `master` holding shared configs. Each machine branch merges from `master` to pull shared changes.
+Use **one branch per machine**. `master` is the **system baseline** — template-level defaults, not a shared content branch. Each machine branch is created off `master` once (step 3) and from then on tracks `master` **one-way**: you pull baseline improvements down with `dotfiles update`; you never push your machine's content up into `master`.
 
 ```bash
-# Pull shared changes from master onto this machine
-dotfiles merge master
+# Pull system-baseline improvements from master onto this machine
+dotfiles update
 ```
 
-To share a change across all machines: commit it to `master`, push, then run `dotfiles merge master` on each other machine.
+`dotfiles update` fast-forwards the system baseline from `master` onto your current machine branch without touching your machine-local content. Confirm the work-tree is clean first (`dotfiles status`, or [`dotfiles doctor`](#health-check-dotfiles-doctor-optional)) — the same precaution called out in [step 3](#3-create-this-machines-branch).
+
+### The partition contract (system vs user)
+
+The whole model rests on a clean split between **system** content (lives on `master`, flows down to every machine) and **user** content (lives only on your machine branch, never travels):
+
+| Concern | Lives in | Owned by | Travels via |
+| --- | --- | --- | --- |
+| System baseline — `.gitignore`, hook stubs, timer, wrappers | `master` | the template | `dotfiles update` (master → machine, one-way) |
+| Your custom git-hook logic | `user_hooks.py` | you | stays on your machine branch |
+| Your git identity (name, email, signing key) | `~/.gitconfig.local`, pulled in via `[include]` | you | stays on your machine branch |
+| Your dotfiles, app configs, machine tweaks | your machine branch | you | stays on your machine branch |
+
+This is why `master` only ever flows **down**. Custom hook behavior goes in **`user_hooks.py`** (a user extension point the system dispatcher calls — see [Git hooks](#git-hooks-optional)) rather than editing the tracked stubs, so a `dotfiles update` never clobbers it. Identity stays in **`~/.gitconfig.local`**, pulled in by a plain `[include]` directive in the tracked `.gitconfig`, so each machine's identity is local and untracked.
+
+> **Sharing content between machines is deliberately out of scope here.** `master` is *not* the channel for that. Machine-to-machine sharing of *user* content is the planned **`sync`** feature — a separate, opt-in flow — not something you achieve by committing personal files to `master`.
 
 ### System updates (`dotfiles-update`)
 
-`dotfiles merge master` merges your *local* `master`. To instead pull the latest **system baseline** straight from the remote in one step — fetch `origin/master`, then merge it — use the `dotfiles-update` wrapper. This is the one-way master→machine propagation path: you never edit system files, so the merge is clean. If it *does* conflict (a system file overlaps one you edited), the command prints a loud message, lists the conflicting files, **aborts the merge** (leaving your work-tree clean), and exits non-zero.
+`dotfiles update` (covered above under [Multiple machines](#multiple-machines)) is the one-way master→machine propagation path: it fetches `origin/master` and merges the latest **system baseline** onto your machine branch in one step. Because you never edit system files, the merge is normally clean. If it *does* conflict (a system file overlaps one you edited), the command prints a loud message, lists the conflicting files, **aborts the merge** (leaving your work-tree clean), and exits non-zero.
 
 It runs manually by default; pass `--auto` (Linux) / `-Auto` (Windows) for unattended use from a scheduled wrapper (same merge semantics).
 
