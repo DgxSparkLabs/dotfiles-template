@@ -649,6 +649,10 @@ jobs:
           Assert-Detects 'venv not synced' '(?m)^  FAIL  githooks-runner venv not synced' $gd $wt
 
           Write-Host "[validate-timer] doctor negative tests ok (Windows)"
+          # The last native command run was doctor (exit 1, intentionally). pwsh
+          # would otherwise propagate that stale $LASTEXITCODE as the step's exit
+          # code; we asserted success above, so exit 0 explicitly.
+          exit 0
 
       # ── Install ──────────────────────────────────────────────────────────
       - name: Install systemd timer
