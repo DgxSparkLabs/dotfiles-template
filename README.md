@@ -208,6 +208,37 @@ git --git-dir "$HOME/.dotfiles" config --show-origin core.hooksPath
 
 Set `DOTFILES_GITHOOKS_VERBOSE=1` to print a line to stderr for every hook invocation (default is silent).
 
+### Per-machine git identity (optional)
+
+Keep machine-specific identity — your email, signing key — out of the shared config so it can vary per machine while applying to **all** git work. The shared `~/.gitconfig` ends with a plain `[include]` of an untracked, per-machine `~/.gitconfig.local`; each machine sets its own email there (work email on the work laptop, personal at home).
+
+The repo ships `.dotfiles/gitconfig.example` as the shared base. Copy it to `~/.gitconfig`, then create the per-machine `~/.gitconfig.local`:
+
+**Bash / Zsh:**
+
+```bash
+cp ~/.dotfiles-worktree-or-clone/.dotfiles/gitconfig.example ~/.gitconfig
+# (or, once .dotfiles/ is checked out into $HOME:)
+cp ~/.dotfiles/gitconfig.example ~/.gitconfig
+
+printf '[user]\n\temail = <you@example.com>\n' > ~/.gitconfig.local
+```
+
+**PowerShell:**
+
+```powershell
+Copy-Item "$HOME\.dotfiles\gitconfig.example" "$HOME\.gitconfig"
+"[user]`n`temail = <you@example.com>" | Set-Content "$HOME\.gitconfig.local"
+```
+
+Then verify it resolves in any repo:
+
+```bash
+git config --get user.email      # -> <you@example.com>
+```
+
+> The `~/.gitconfig.local` file is **per-machine and untracked** — create it on every machine. If it's missing, git silently skips the include and `user.email` is simply unset, so commits will fail to identify you until you create it.
+
 ### Submodules (optional)
 
 > ⚠️ **Known limitation:** submodule operations (`add`, `init`, `update`) don't always compose cleanly with the bare-repo `--git-dir`/`--work-tree` pattern — a long-standing git issue. The instructions below work for many users but may fail on some git versions. If you hit errors, alternatives include committing the files directly or using a tool like `chezmoi` that has first-class submodule support.

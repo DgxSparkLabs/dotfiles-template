@@ -189,6 +189,63 @@ jobs:
           }
           Write-Host "[validate-timer] git hooks setup ok (Windows)"
 
+      # ── README "Per-machine git identity": [include] of ~/.gitconfig.local ─
+      # Note: runs in $RUNNER_TEMP, not $HOME — the runner's real ~/.gitconfig
+      # is left untouched (the synthetic dotfiles repo above depends on it).
+      - name: "Validate gitconfig.example [include] resolves sentinel email (Linux)"
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          home="$RUNNER_TEMP/gitid-home"
+          mkdir -p "$home"
+          echo "[validate-timer] copy .dotfiles/gitconfig.example -> \$HOME/.gitconfig"
+          cp .dotfiles/gitconfig.example "$home/.gitconfig"
+          echo "[validate-timer] write per-machine \$HOME/.gitconfig.local with sentinel email"
+          printf '[user]\n\temail = sentinel@dotfiles.test\n' > "$home/.gitconfig.local"
+
+          repo="$RUNNER_TEMP/gitid-repo"
+          mkdir -p "$repo"
+          git -C "$repo" init -q
+          echo "[validate-timer] assert git config --get user.email resolves sentinel in a normal repo"
+          got=$(HOME="$home" git -C "$repo" config --get user.email)
+          echo "[validate-timer] resolved user.email = $got"
+          [ "$got" = "sentinel@dotfiles.test" ] \
+            || { echo "FAIL: expected sentinel@dotfiles.test, got '$got'"; exit 1; }
+          echo "[validate-timer] PASS: [include] of ~/.gitconfig.local resolves (Linux)"
+
+      - name: "Validate gitconfig.example [include] resolves sentinel email (Windows)"
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # NB: $HOME is a read-only PowerShell automatic variable — assigning to
+          # it (even as $home, names are case-insensitive) throws. Use $gitidHome.
+          $gitidHome = Join-Path $env:RUNNER_TEMP 'gitid-home'
+          New-Item -ItemType Directory -Force -Path $gitidHome | Out-Null
+          Write-Host "[validate-timer] copy .dotfiles/gitconfig.example -> `$HOME/.gitconfig"
+          Copy-Item '.dotfiles/gitconfig.example' (Join-Path $gitidHome '.gitconfig') -Force
+          Write-Host "[validate-timer] write per-machine `$HOME/.gitconfig.local with sentinel email"
+          "[user]`n`temail = sentinel@dotfiles.test" | Set-Content (Join-Path $gitidHome '.gitconfig.local')
+
+          $repo = Join-Path $env:RUNNER_TEMP 'gitid-repo'
+          New-Item -ItemType Directory -Force -Path $repo | Out-Null
+          git -C $repo init -q
+          Write-Host "[validate-timer] assert git config --get user.email resolves sentinel in a normal repo"
+          # git on Windows expands `~` in the [include] path via $HOME when set;
+          # point it at our temp home so the include resolves the sentinel .local.
+          $env:HOME = $gitidHome
+          try {
+              $got = (git -C $repo config --get user.email).Trim()
+          } finally {
+              $env:HOME = $null
+          }
+          Write-Host "[validate-timer] resolved user.email = $got"
+          if ($got -ne 'sentinel@dotfiles.test') {
+              throw "FAIL: expected sentinel@dotfiles.test, got '$got'"
+          }
+          Write-Host "[validate-timer] PASS: [include] of ~/.gitconfig.local resolves (Windows)"
+
       # ── Install ──────────────────────────────────────────────────────────
       - name: Install systemd timer
         if: runner.os == 'Linux'
