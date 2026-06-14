@@ -4,15 +4,11 @@
 # yet. This defines it temporarily, clones your bare repo, then checks out your
 # machine's branch (which restores the profile and re-establishes the function).
 #
-# Parameters (command-line — preferred):
+# Parameters (command-line only — no environment variables):
 #   -Repo <url>     (required) git remote URL, e.g. git@github.com:<YOU>/dotfiles.git
 #   -Branch <name>  (optional) branch to check out. If omitted, the machine name
 #                   is auto-detected and you are prompted to confirm it or type
 #                   a different branch.
-#
-# Fallback (only when the parameter is absent):
-#   $env:DOTFILES_REPO    git remote URL
-#   $env:DOTFILES_BRANCH  branch to check out
 #
 # Usage:
 #   pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git
@@ -24,25 +20,21 @@
 # instead of hanging on the prompt.
 
 param(
+    [Parameter(Mandatory = $true)]
     [string]$Repo,
     [string]$Branch
 )
 
 $ErrorActionPreference = 'Stop'
 
-# ── Repo: parameter wins, env var is the documented fallback ────────────────
-if (-not $Repo) { $Repo = $env:DOTFILES_REPO }
+# ── Repo: required, command-line parameter only ─────────────────────────────
 if (-not $Repo) {
     Write-Error "bootstrap.ps1: -Repo is required (the git remote URL of your dotfiles repo). e.g. pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git"
     exit 1
 }
 
-# Track whether a branch was supplied at all (parameter or env fallback).
+# Track whether a branch was supplied on the command line.
 $branchProvided = [bool]$Branch
-if (-not $Branch -and $env:DOTFILES_BRANCH) {
-    $Branch = $env:DOTFILES_BRANCH
-    $branchProvided = $true
-}
 
 # ── Branch: explicit value, else auto-detect + confirm with the user ────────
 function Get-MachineBranch {

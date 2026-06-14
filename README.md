@@ -295,7 +295,7 @@ Both take the repo URL and (optionally) the branch as **command-line parameters*
 | repo (`--repo` / `-Repo`) | yes (fails fast if missing) | — |
 | branch (`--branch` / `-Branch`) | no | auto-detected machine name, **confirmed interactively** — Linux `/sys/class/dmi/id/board_name`, WSL → `WSL`, Windows `(Get-WmiObject Win32_BaseBoard).product`, else hostname |
 
-If you don't pass a branch, the script auto-detects this machine's name and asks you to confirm it (press Enter) or type a different branch before applying. In a non-interactive context (no TTY, e.g. CI) it errors and tells you to pass the branch explicitly, rather than hanging on the prompt. The `DOTFILES_REPO` / `DOTFILES_BRANCH` environment variables are still honored as a fallback, but command-line arguments take precedence.
+If you don't pass a branch, the script auto-detects this machine's name and asks you to confirm it (press Enter) or type a different branch before applying. In a non-interactive context (no TTY, e.g. CI) it errors and tells you to pass the branch explicitly, rather than hanging on the prompt. Input comes only from command-line arguments — there are no environment-variable fallbacks.
 
 On a fresh machine you only have the script (copy it over, or fetch it from your repo's web UI). Run:
 

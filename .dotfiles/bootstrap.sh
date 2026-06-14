@@ -5,16 +5,12 @@
 # This defines it temporarily, clones your bare repo, then checks out your
 # machine's branch (which restores the profile and re-establishes the alias).
 #
-# Parameters (command-line arguments — preferred):
+# Parameters (command-line arguments only — no environment variables):
 #   --repo <url>      (required) git remote URL, e.g. git@github.com:<YOU>/dotfiles.git
 #   --branch <name>   (optional) branch to check out. If omitted, the machine name
 #                     is auto-detected and you are prompted to confirm it or type
 #                     a different branch.
 #   <repo-url> [branch]  positional form, equivalent to the flags above.
-#
-# Fallback (only used when the matching argument is absent):
-#   DOTFILES_REPO    git remote URL
-#   DOTFILES_BRANCH  branch to check out
 #
 # Usage:
 #   bash bootstrap.sh --repo git@github.com:<YOU>/dotfiles.git
@@ -35,8 +31,6 @@ Usage: bootstrap.sh --repo <url> [--branch <name>]
 
   --repo <url>     git remote URL of your dotfiles repo (required)
   --branch <name>  branch to check out (optional; you are prompted if omitted)
-
-Falls back to $DOTFILES_REPO / $DOTFILES_BRANCH when the argument is absent.
 EOF
 }
 
@@ -69,18 +63,11 @@ if [ $# -gt 0 ]; then
   if [ $# -gt 0 ] && [ "$branch_set" -eq 0 ]; then BRANCH="$1"; branch_set=1; shift; fi
 fi
 
-# ── Repo: argument wins, env var is the documented fallback ─────────────────
-if [ -z "$REPO" ]; then REPO="${DOTFILES_REPO:-}"; fi
+# ── Repo: required, command-line argument only ──────────────────────────────
 if [ -z "$REPO" ]; then
   echo "bootstrap.sh: a repo URL is required (the git remote URL of your dotfiles repo)." >&2
   usage
   exit 1
-fi
-
-# Branch fallback: env var only when no --branch/positional was given.
-if [ "$branch_set" -eq 0 ] && [ -n "${DOTFILES_BRANCH:-}" ]; then
-  BRANCH="$DOTFILES_BRANCH"
-  branch_set=1
 fi
 
 # ── Branch: explicit value, else auto-detect + confirm with the user ────────
