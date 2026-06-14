@@ -217,18 +217,22 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $home = Join-Path $env:RUNNER_TEMP 'gitid-home'
-          New-Item -ItemType Directory -Force -Path $home | Out-Null
+          # NB: $HOME is a read-only PowerShell automatic variable — assigning to
+          # it (even as $home, names are case-insensitive) throws. Use $gitidHome.
+          $gitidHome = Join-Path $env:RUNNER_TEMP 'gitid-home'
+          New-Item -ItemType Directory -Force -Path $gitidHome | Out-Null
           Write-Host "[validate-timer] copy .dotfiles/gitconfig.example -> `$HOME/.gitconfig"
-          Copy-Item '.dotfiles/gitconfig.example' (Join-Path $home '.gitconfig') -Force
+          Copy-Item '.dotfiles/gitconfig.example' (Join-Path $gitidHome '.gitconfig') -Force
           Write-Host "[validate-timer] write per-machine `$HOME/.gitconfig.local with sentinel email"
-          "[user]`n`temail = sentinel@dotfiles.test" | Set-Content (Join-Path $home '.gitconfig.local')
+          "[user]`n`temail = sentinel@dotfiles.test" | Set-Content (Join-Path $gitidHome '.gitconfig.local')
 
           $repo = Join-Path $env:RUNNER_TEMP 'gitid-repo'
           New-Item -ItemType Directory -Force -Path $repo | Out-Null
           git -C $repo init -q
           Write-Host "[validate-timer] assert git config --get user.email resolves sentinel in a normal repo"
-          $env:HOME = $home
+          # git on Windows expands `~` in the [include] path via $HOME when set;
+          # point it at our temp home so the include resolves the sentinel .local.
+          $env:HOME = $gitidHome
           try {
               $got = (git -C $repo config --get user.email).Trim()
           } finally {
