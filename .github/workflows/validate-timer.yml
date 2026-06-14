@@ -738,3 +738,146 @@ jobs:
           Write-Host "[validate-timer] ci-commit-message-demos.ps1"
           pwsh .github/scripts/ci-commit-message-demos.ps1
           Write-Host "[validate-timer] ci-commit-message-demos.ps1 ok"
+
+      # ── dotfiles-update: clean-merge case ────────────────────────────────
+      # Advance origin/master with a brand-new system file (no overlap with the
+      # machine's tree), then `dotfiles-update` must fetch + merge it cleanly.
+      - name: "dotfiles-update: clean merge (Linux)"
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotfiles() { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" "$@"; }
+          cd "$HOME"
+
+          echo "[validate-timer] advance origin/master via scratch clone"
+          rm -rf /tmp/df-scratch
+          git clone /tmp/dotfiles-remote.git /tmp/df-scratch
+          ( cd /tmp/df-scratch
+            git checkout master
+            printf 'system improvement\n' > .dotfiles/SYSTEM_NEW.txt
+            git add -f .dotfiles/SYSTEM_NEW.txt
+            git commit -m "feat(system): add SYSTEM_NEW marker"
+            git push origin master )
+
+          echo "[validate-timer] dotfiles-update (clean) -> expect exit 0 + file present"
+          bash "$HOME/.dotfiles/dotfiles-update.sh"
+          test -f "$HOME/.dotfiles/SYSTEM_NEW.txt" \
+            || { echo "FAIL: SYSTEM_NEW.txt not merged into work-tree"; exit 1; }
+          dotfiles merge-base --is-ancestor origin/master HEAD \
+            || { echo "FAIL: origin/master not merged into HEAD"; exit 1; }
+          echo "[validate-timer] PASS: clean merge propagated origin/master"
+
+      - name: "dotfiles-update: clean merge (Windows)"
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function dotfiles { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" @args }
+          Set-Location $HOME
+
+          Write-Host "[validate-timer] advance origin/master via scratch clone"
+          Remove-Item -Recurse -Force C:\df-scratch -ErrorAction SilentlyContinue
+          git clone C:\dotfiles-remote.git C:\df-scratch
+          Push-Location C:\df-scratch
+          try {
+              git checkout master
+              "system improvement" | Set-Content .dotfiles\SYSTEM_NEW.txt
+              git add -f .dotfiles/SYSTEM_NEW.txt
+              git commit -m "feat(system): add SYSTEM_NEW marker"
+              git push origin master
+          } finally { Pop-Location }
+
+          Write-Host "[validate-timer] dotfiles-update (clean) -> expect exit 0 + file present"
+          pwsh "$HOME\.dotfiles\dotfiles-update.ps1"
+          if ($LASTEXITCODE -ne 0) { throw "FAIL: dotfiles-update exited $LASTEXITCODE on clean merge" }
+          if (-not (Test-Path "$HOME\.dotfiles\SYSTEM_NEW.txt")) { throw "FAIL: SYSTEM_NEW.txt not merged" }
+          dotfiles merge-base --is-ancestor origin/master HEAD
+          if ($LASTEXITCODE -ne 0) { throw "FAIL: origin/master not merged into HEAD" }
+          Write-Host "[validate-timer] PASS: clean merge propagated origin/master"
+
+      # ── dotfiles-update: conflict case ───────────────────────────────────
+      # Diverge the same file on both sides: the machine edits a tracked file,
+      # origin/master edits the same region. `dotfiles-update` must print a loud
+      # message, list the conflict, abort the merge (clean tree), and exit 1.
+      - name: "dotfiles-update: conflict aborts (Linux)"
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -uo pipefail
+          dotfiles() { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" "$@"; }
+          cd "$HOME"
+
+          echo "[validate-timer] remote edits CONFLICT.txt one way"
+          rm -rf /tmp/df-scratch2
+          git clone /tmp/dotfiles-remote.git /tmp/df-scratch2
+          ( cd /tmp/df-scratch2
+            git checkout master
+            printf 'remote-side line\n' > .dotfiles/CONFLICT.txt
+            git add -f .dotfiles/CONFLICT.txt
+            git commit -m "feat(system): CONFLICT.txt remote edit"
+            git push origin master )
+
+          echo "[validate-timer] machine edits CONFLICT.txt the other way"
+          printf 'machine-side line\n' > "$HOME/.dotfiles/CONFLICT.txt"
+          dotfiles add -f .dotfiles/CONFLICT.txt
+          dotfiles commit -m "local: CONFLICT.txt machine edit"
+          HEAD_BEFORE=$(dotfiles rev-parse HEAD)
+
+          echo "[validate-timer] dotfiles-update (conflict) -> expect exit 1 + abort"
+          set +e
+          OUT=$(bash "$HOME/.dotfiles/dotfiles-update.sh" 2>&1); RC=$?
+          set -e
+          echo "$OUT"
+          [ "$RC" -eq 1 ] || { echo "FAIL: expected exit 1, got $RC"; exit 1; }
+          echo "$OUT" | grep -q "DOTFILES UPDATE CONFLICT" \
+            || { echo "FAIL: missing loud conflict message"; exit 1; }
+          echo "$OUT" | grep -q "CONFLICT.txt" \
+            || { echo "FAIL: conflicting file not listed"; exit 1; }
+          # merge aborted: HEAD unchanged + no MERGE_HEAD + clean status
+          [ "$(dotfiles rev-parse HEAD)" = "$HEAD_BEFORE" ] \
+            || { echo "FAIL: HEAD moved despite abort"; exit 1; }
+          test ! -f "$HOME/.dotfiles/MERGE_HEAD" \
+            || { echo "FAIL: MERGE_HEAD present — merge not aborted"; exit 1; }
+          [ -z "$(dotfiles status --porcelain)" ] \
+            || { echo "FAIL: work-tree not clean after abort"; dotfiles status --porcelain; exit 1; }
+          echo "[validate-timer] PASS: conflict aborted, tree clean, exit 1"
+
+      - name: "dotfiles-update: conflict aborts (Windows)"
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function dotfiles { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" @args }
+          Set-Location $HOME
+
+          Write-Host "[validate-timer] remote edits CONFLICT.txt one way"
+          Remove-Item -Recurse -Force C:\df-scratch2 -ErrorAction SilentlyContinue
+          git clone C:\dotfiles-remote.git C:\df-scratch2
+          Push-Location C:\df-scratch2
+          try {
+              git checkout master
+              "remote-side line" | Set-Content .dotfiles\CONFLICT.txt
+              git add -f .dotfiles/CONFLICT.txt
+              git commit -m "feat(system): CONFLICT.txt remote edit"
+              git push origin master
+          } finally { Pop-Location }
+
+          Write-Host "[validate-timer] machine edits CONFLICT.txt the other way"
+          "machine-side line" | Set-Content "$HOME\.dotfiles\CONFLICT.txt"
+          dotfiles add -f .dotfiles/CONFLICT.txt
+          dotfiles commit -m "local: CONFLICT.txt machine edit"
+          $headBefore = (dotfiles rev-parse HEAD)
+
+          Write-Host "[validate-timer] dotfiles-update (conflict) -> expect exit 1 + abort"
+          $out = pwsh "$HOME\.dotfiles\dotfiles-update.ps1" 2>&1 | Out-String
+          $rc = $LASTEXITCODE
+          Write-Host $out
+          if ($rc -ne 1) { throw "FAIL: expected exit 1, got $rc" }
+          if ($out -notmatch 'DOTFILES UPDATE CONFLICT') { throw "FAIL: missing loud conflict message" }
+          if ($out -notmatch 'CONFLICT\.txt') { throw "FAIL: conflicting file not listed" }
+          if ((dotfiles rev-parse HEAD) -ne $headBefore) { throw "FAIL: HEAD moved despite abort" }
+          if (Test-Path "$HOME\.dotfiles\MERGE_HEAD") { throw "FAIL: MERGE_HEAD present — merge not aborted" }
+          $status = (dotfiles status --porcelain | Out-String).Trim()
+          if ($status) { throw "FAIL: work-tree not clean after abort:`n$status" }
+          Write-Host "[validate-timer] PASS: conflict aborted, tree clean, exit 1"
