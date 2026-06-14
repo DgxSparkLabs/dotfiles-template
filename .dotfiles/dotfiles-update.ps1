@@ -26,7 +26,7 @@ if ($Help) {
 Usage: pwsh dotfiles-update.ps1 [-Auto]
 
 Pulls system improvements from origin/master into this machine's branch:
-  git --git-dir=$GitDir --work-tree=$WorkTree fetch origin master
+  git --git-dir=$GitDir --work-tree=$WorkTree fetch origin master:refs/remotes/origin/master
   git --git-dir=$GitDir --work-tree=$WorkTree merge --no-edit origin/master
 
   (default)  Manual run.
@@ -39,7 +39,11 @@ is left clean. Resolve by reconciling the system/user file partition.
 }
 
 Write-Host "dotfiles update: fetching origin/master (auto=$([int][bool]$Auto))"
-& git @gitArgs fetch origin master
+# Explicit refspec updates the refs/remotes/origin/master tracking ref. A bare
+# clone (the README setup) starts with NO remote-tracking refs and a refspec-less
+# `fetch origin master` only writes FETCH_HEAD — leaving `merge origin/master` to
+# fail with "not something we can merge". The refspec makes origin/master real.
+& git @gitArgs fetch origin "master:refs/remotes/origin/master"
 if ($LASTEXITCODE -ne 0) {
     Write-Error "dotfiles update: fetch failed (check SSH agent / network / remote)"
     exit 1
@@ -47,6 +51,16 @@ if ($LASTEXITCODE -ne 0) {
 
 & git @gitArgs merge --no-edit origin/master
 if ($LASTEXITCODE -ne 0) {
+    # Distinguish a real merge conflict (merge started, MERGE_HEAD exists) from a
+    # merge that never began (e.g. refused / unrelated histories / bad ref). Only
+    # a conflict warrants the loud partition message + `merge --abort`; aborting
+    # when no merge is in progress errors "no merge to abort (MERGE_HEAD missing)".
+    & git @gitArgs rev-parse -q --verify MERGE_HEAD *> $null
+    if ($LASTEXITCODE -ne 0) {
+        [Console]::Error.WriteLine("dotfiles update: merge could not start (no merge in progress to abort).")
+        [Console]::Error.WriteLine("dotfiles update: see the git error above; nothing was changed.")
+        exit 1
+    }
     $conflicts = @(& git @gitArgs diff --name-only --diff-filter=U | Where-Object { $_ })
     $msg = @()
     $msg += ""

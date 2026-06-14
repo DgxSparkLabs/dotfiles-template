@@ -26,7 +26,7 @@ print_usage() {
 Usage: $0 [--auto]
 
 Pulls system improvements from origin/master into this machine's branch:
-  git --git-dir=$GIT_DIR --work-tree=$WORK_TREE fetch origin master
+  git --git-dir=$GIT_DIR --work-tree=$WORK_TREE fetch origin master:refs/remotes/origin/master
   git --git-dir=$GIT_DIR --work-tree=$WORK_TREE merge --no-edit origin/master
 
   (default)  Manual run.
@@ -47,12 +47,25 @@ for arg in "$@"; do
 done
 
 echo "dotfiles update: fetching origin/master (auto=$AUTO)"
-if ! dotgit fetch origin master; then
+# Explicit refspec updates the refs/remotes/origin/master tracking ref. A bare
+# clone (the README setup) starts with NO remote-tracking refs and a refspec-less
+# `fetch origin master` only writes FETCH_HEAD — leaving `merge origin/master` to
+# fail with "not something we can merge". The refspec makes origin/master real.
+if ! dotgit fetch origin "master:refs/remotes/origin/master"; then
   echo "dotfiles update: fetch failed (check SSH agent / network / remote)" >&2
   exit 1
 fi
 
 if ! dotgit merge --no-edit origin/master; then
+  # Distinguish a real merge conflict (merge started, MERGE_HEAD exists) from a
+  # merge that never began (e.g. refused / unrelated histories / bad ref). Only a
+  # conflict warrants the loud partition message + `merge --abort`; aborting when
+  # no merge is in progress errors "no merge to abort (MERGE_HEAD missing)".
+  if ! dotgit rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+    echo "dotfiles update: merge could not start (no merge in progress to abort)." >&2
+    echo "dotfiles update: see the git error above; nothing was changed." >&2
+    exit 1
+  fi
   conflicts=$(dotgit diff --name-only --diff-filter=U)
   echo "" >&2
   echo "========================================================================" >&2
