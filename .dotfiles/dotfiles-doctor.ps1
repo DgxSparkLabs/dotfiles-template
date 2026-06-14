@@ -20,7 +20,7 @@ $RunnerDir = "$GitDir\githooks-runner"
 $TimerPs1  = "$GitDir\dotfiles-timer.ps1"
 
 if ($Help) {
-    Write-Host @"
+    Write-Output @"
 Usage: pwsh dotfiles-doctor.ps1 [-SkipNetwork]
 
 Runs setup health-checks for the dotfiles bare repo at:
@@ -39,16 +39,21 @@ function Invoke-Dotfiles {
 
 $script:HardFails = 0
 
-function Write-Pass([string]$msg) { Write-Host "  PASS  $msg" }
-function Write-Info([string]$msg) { Write-Host "  INFO  $msg" }
+# Report goes to the success/output stream (stdout) — NOT Write-Host. Write-Host
+# targets the Information stream (6), which a plain `... 2>&1 | Out-String` capture
+# does not collect, so a caller scraping the report (e.g. CI) would see an empty
+# string even though the console showed the lines. Write-Output keeps the doctor's
+# output capturable the same way the sibling dotfiles-doctor.sh writes to stdout.
+function Write-Pass([string]$msg) { Write-Output "  PASS  $msg" }
+function Write-Info([string]$msg) { Write-Output "  INFO  $msg" }
 function Write-Fail([string]$msg, [string]$fix) {
-    Write-Host "  FAIL  $msg"
-    if ($fix) { Write-Host "        fix: $fix" }
+    Write-Output "  FAIL  $msg"
+    if ($fix) { Write-Output "        fix: $fix" }
     $script:HardFails++
 }
 
-Write-Host "dotfiles doctor — checking setup at $GitDir"
-Write-Host ""
+Write-Output "dotfiles doctor — checking setup at $GitDir"
+Write-Output ""
 
 # 1. uv on PATH ─────────────────────────────────────────────────────────────
 $uv = Get-Command uv -ErrorAction SilentlyContinue
@@ -178,10 +183,10 @@ if ($SkipNetwork) {
     }
 }
 
-Write-Host ""
+Write-Output ""
 if ($script:HardFails -gt 0) {
-    Write-Host "doctor: $($script:HardFails) hard check(s) FAILED — see fix hints above."
+    Write-Output "doctor: $($script:HardFails) hard check(s) FAILED — see fix hints above."
     exit 1
 }
-Write-Host "doctor: all hard checks PASSED."
+Write-Output "doctor: all hard checks PASSED."
 exit 0
