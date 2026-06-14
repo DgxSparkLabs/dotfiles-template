@@ -7,8 +7,8 @@
 # Provides:
 #   - dotfiles        -> full git completion (requires git's bash completion)
 #   - dotfiles-timer  -> static verbs + flags
-#   - dotfiles-update -> --auto
-#   - dotfiles-doctor -> --skip-network
+#   - dotfiles-update -> --auto, --help
+#   - dotfiles-doctor -> --git-dir, --work-tree, --skip-network, --help
 #
 # Prereq for `dotfiles`: git's bash-completion script must be loaded so that
 # __git_complete / __git_main are defined. If it is not present, the dotfiles
@@ -36,14 +36,14 @@ _dotfiles_timer_complete() {
     # After install/reinstall, offer the add-all flags.
     case "$prev" in
         install|reinstall)
-            mapfile -t COMPREPLY < <(compgen -W "--all -A -AddAll" -- "$cur")
+            mapfile -t COMPREPLY < <(compgen -W "--all -A" -- "$cur")
             return 0
             ;;
     esac
 
     # Allow flags anywhere when the user has started typing one.
     if [[ "$cur" == -* ]]; then
-        mapfile -t COMPREPLY < <(compgen -W "--all -A -AddAll" -- "$cur")
+        mapfile -t COMPREPLY < <(compgen -W "--all -A" -- "$cur")
         return 0
     fi
 
@@ -56,7 +56,7 @@ complete -F _dotfiles_timer_complete dotfiles-timer
 _dotfiles_update_complete() {
     local cur
     cur="${COMP_WORDS[COMP_CWORD]}"
-    mapfile -t COMPREPLY < <(compgen -W "--auto" -- "$cur")
+    mapfile -t COMPREPLY < <(compgen -W "--auto -h --help" -- "$cur")
     return 0
 }
 complete -F _dotfiles_update_complete dotfiles-update
@@ -65,7 +65,7 @@ complete -F _dotfiles_update_complete dotfiles-update
 _dotfiles_doctor_complete() {
     local cur
     cur="${COMP_WORDS[COMP_CWORD]}"
-    mapfile -t COMPREPLY < <(compgen -W "--skip-network" -- "$cur")
+    mapfile -t COMPREPLY < <(compgen -W "--git-dir --work-tree --skip-network -h --help" -- "$cur")
     return 0
 }
 complete -F _dotfiles_doctor_complete dotfiles-doctor

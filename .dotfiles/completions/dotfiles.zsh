@@ -8,8 +8,8 @@
 # Provides:
 #   - dotfiles        -> full git completion (reuses zsh's _git)
 #   - dotfiles-timer  -> static verbs + flags
-#   - dotfiles-update -> --auto
-#   - dotfiles-doctor -> --skip-network
+#   - dotfiles-update -> --auto, --help
+#   - dotfiles-doctor -> --git-dir, --work-tree, --skip-network, --help
 #
 # Prereq for `dotfiles`: zsh's git completion (_git) must be available. If it is
 # not, the `dotfiles` completion silently no-ops; the other completions work.
@@ -36,9 +36,8 @@ _dotfiles_timer() {
         'remove:Full removal (alias of uninstall)'
     )
     flags=(
-        '--all[stage new files: git add -A (Linux)]'
-        '-A[stage new files: git add -A (Linux)]'
-        '-AddAll[stage new files: git add -A (Windows)]'
+        '--all[stage new files: git add -A]'
+        '-A[stage new files: git add -A]'
     )
     if (( CURRENT == 2 )); then
         _describe -t verbs 'dotfiles-timer verb' verbs
@@ -50,12 +49,18 @@ compdef _dotfiles_timer dotfiles-timer
 
 # ── dotfiles-update ──────────────────────────────────────────────────────────
 _dotfiles_update() {
-    _arguments '--auto[run non-interactively, no prompts]'
+    _arguments \
+        '--auto[run non-interactively, no prompts]' \
+        '(-h --help)'{-h,--help}'[show usage]'
 }
 compdef _dotfiles_update dotfiles-update
 
 # ── dotfiles-doctor ──────────────────────────────────────────────────────────
 _dotfiles_doctor() {
-    _arguments '--skip-network[skip checks that require network access]'
+    _arguments \
+        '--git-dir[override the bare-repo git dir]:git dir:_files -/' \
+        '--work-tree[override the work-tree]:work tree:_files -/' \
+        '--skip-network[skip checks that require network access]' \
+        '(-h --help)'{-h,--help}'[show usage]'
 }
 compdef _dotfiles_doctor dotfiles-doctor

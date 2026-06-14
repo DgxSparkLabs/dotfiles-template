@@ -6,8 +6,8 @@
 # Provides argument completers for:
 #   - dotfiles        -> delegates to git's native completion
 #   - dotfiles-timer  -> static verbs + flags
-#   - dotfiles-update -> --auto
-#   - dotfiles-doctor -> --skip-network
+#   - dotfiles-update -> -Auto, -Help
+#   - dotfiles-doctor -> -SkipNetwork, -GitDir, -WorkTree, -Help
 #
 # Prereq for `dotfiles`: git's PowerShell completion (posh-git, or the
 # Register-ArgumentCompleter shipped with recent Git for Windows) must be
@@ -71,7 +71,7 @@ Register-ArgumentCompleter -Native -CommandName dotfiles-timer -ScriptBlock {
         'install', 'reinstall', 'enable', 'disable', 'start', 'stop',
         'status', 'logs', 'uninstall', 'remove'
     )
-    $flags = @('--all', '-A', '-AddAll')
+    $flags = @('-AddAll')
 
     # tokens[0] is the command itself; a verb is expected as the first argument.
     if ($tokens.Count -le 1 -or ($tokens.Count -eq 2 -and $wordToComplete)) {
@@ -91,11 +91,11 @@ Register-ArgumentCompleter -Native -CommandName dotfiles-timer -ScriptBlock {
 # ── dotfiles-update ──────────────────────────────────────────────────────────
 Register-ArgumentCompleter -Native -CommandName dotfiles-update -ScriptBlock {
     param($wordToComplete, $commandAst, $cursorPosition)
-    @('--auto') |
+    @('-Auto', '-Help') |
         Where-Object { $_ -like "$wordToComplete*" } |
         ForEach-Object {
             [System.Management.Automation.CompletionResult]::new(
-                $_, $_, 'ParameterValue', 'Run non-interactively'
+                $_, $_, 'ParameterValue', $_
             )
         }
 }
@@ -103,11 +103,11 @@ Register-ArgumentCompleter -Native -CommandName dotfiles-update -ScriptBlock {
 # ── dotfiles-doctor ──────────────────────────────────────────────────────────
 Register-ArgumentCompleter -Native -CommandName dotfiles-doctor -ScriptBlock {
     param($wordToComplete, $commandAst, $cursorPosition)
-    @('--skip-network') |
+    @('-SkipNetwork', '-GitDir', '-WorkTree', '-Help') |
         Where-Object { $_ -like "$wordToComplete*" } |
         ForEach-Object {
             [System.Management.Automation.CompletionResult]::new(
-                $_, $_, 'ParameterValue', 'Skip network checks'
+                $_, $_, 'ParameterValue', $_
             )
         }
 }
