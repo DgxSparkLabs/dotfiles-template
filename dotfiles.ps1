@@ -110,6 +110,100 @@ function __df_setting($repo, $key, $def) {
 function __df_update { __df_debug "updating engine at $DotfilesCommon"; git -C $DotfilesCommon pull --ff-only }
 function __df_timer  { & (Join-Path $DotfilesCommon 'timer/dotfiles-timer.ps1') @args }
 
+# --- Node 5: never-block reconcile + surfaced resolution ------------------------------
+# State (loser log) lives under ~/.dotfiles/state/<repo>/ — LOCAL ONLY, never pushed.
+function __df_state_dir($repo)  { Join-Path (Join-Path $DotfilesRoot 'state') $repo }
+function __df_conflicts_log($repo) { Join-Path (__df_state_dir $repo) 'conflicts.log' }
+
+# Encode an arbitrary repo path into a single git-ref-safe component (refs can't contain
+# leading dots, '..', or end in '.lock'; collapsing every non-alphanumeric to '_' avoids all).
+function __df_ref_enc($p) { ($p -replace '[^A-Za-z0-9]', '_') }
+
+# Reconcile the local branch with origin's tip, NEVER blocking. Run AFTER the local commit
+# and BEFORE push. Returns $true if a push should be attempted, $false to skip this tick.
+function __df_reconcile($repo, $gd, $branch) {
+  # Fetch the upstream branch. Network/remote failure -> skip push (never blocks).
+  git --git-dir="$gd" --work-tree="$env:HOME" fetch -q origin $branch 2>$null | Out-Null
+  if ($LASTEXITCODE -ne 0) { __df_debug "reconcile: $repo fetch failed -> skip push"; return $false }
+
+  $theirs = (git --git-dir="$gd" rev-parse --verify -q FETCH_HEAD 2>$null | Out-String).Trim()
+  if (-not $theirs) { __df_debug "reconcile: $repo no FETCH_HEAD"; return $true }
+  $ours = (git --git-dir="$gd" rev-parse --verify -q HEAD 2>$null | Out-String).Trim()
+
+  # Already contains origin tip (up to date or ahead) -> no merge needed.
+  git --git-dir="$gd" merge-base --is-ancestor $theirs $ours 2>$null | Out-Null
+  if ($LASTEXITCODE -eq 0) { __df_debug "reconcile: $repo already contains origin tip"; return $true }
+
+  # Unrelated histories -> REFUSE (node 6 owns recovery; never force a wrong merge).
+  git --git-dir="$gd" merge-base $ours $theirs 2>$null | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    [Console]::Error.WriteLine("dotfiles: ${repo}: unrelated histories with origin/${branch}; refusing to merge (manual action needed)")
+    return $false
+  }
+
+  # Try the merge without committing/fast-forwarding so we resolve clashes ourselves.
+  git --git-dir="$gd" --work-tree="$env:HOME" merge --no-commit --no-ff $theirs 2>$null | Out-Null
+  if ($LASTEXITCODE -eq 0) {
+    git --git-dir="$gd" --work-tree="$env:HOME" commit --no-edit -q 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) { git --git-dir="$gd" --work-tree="$env:HOME" commit --no-edit -q --allow-empty 2>$null | Out-Null }
+    __df_debug "reconcile: $repo clean merge"
+    return $true
+  }
+
+  # Conflicts: resolve EACH conflicted path, never blocking.
+  $ts = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ssK')
+  $sdir = __df_state_dir $repo
+  New-Item -ItemType Directory -Force -Path $sdir | Out-Null
+  $logf = __df_conflicts_log $repo
+  $epoch = [int][double]::Parse((Get-Date -UFormat %s))
+
+  $conflicted = @(git --git-dir="$gd" --work-tree="$env:HOME" diff --name-only --diff-filter=U 2>$null | Where-Object { $_ -ne '' })
+  foreach ($path in $conflicted) {
+    $stages = @(git --git-dir="$gd" --work-tree="$env:HOME" ls-files -u -- "$path" 2>$null)
+    $hasOurs   = ($stages | Where-Object { $_ -match '\s2\t' }).Count -gt 0
+    $hasTheirs = ($stages | Where-Object { $_ -match '\s3\t' }).Count -gt 0
+    $winner = $null; $loserSha = $null
+
+    if ($hasOurs -and $hasTheirs) {
+      $od = (git --git-dir="$gd" log -1 --format=%ct $ours   -- "$path" 2>$null | Out-String).Trim(); if (-not $od) { $od = '0' }
+      $td = (git --git-dir="$gd" log -1 --format=%ct $theirs -- "$path" 2>$null | Out-String).Trim(); if (-not $td) { $td = '0' }
+      if ([long]$td -gt [long]$od) {
+        $winner = 'theirs'; $loserSha = $ours
+        git --git-dir="$gd" --work-tree="$env:HOME" checkout --theirs -- "$path" 2>$null | Out-Null
+      } else {
+        $winner = 'ours'; $loserSha = $theirs
+        git --git-dir="$gd" --work-tree="$env:HOME" checkout --ours -- "$path" 2>$null | Out-Null
+      }
+    } elseif ($hasOurs) {
+      # modify/delete: ours edited, theirs deleted -> edit-beats-delete.
+      $winner = 'ours'; $loserSha = $theirs
+      git --git-dir="$gd" --work-tree="$env:HOME" checkout --ours -- "$path" 2>$null | Out-Null
+    } else {
+      # modify/delete: theirs edited, ours deleted -> edit-beats-delete.
+      $winner = 'theirs'; $loserSha = $ours
+      git --git-dir="$gd" --work-tree="$env:HOME" checkout --theirs -- "$path" 2>$null | Out-Null
+    }
+
+    git --git-dir="$gd" --work-tree="$env:HOME" add -- "$path" 2>$null | Out-Null
+    $enc = __df_ref_enc $path
+    if ($loserSha) {
+      git --git-dir="$gd" update-ref "refs/sync-losers/$enc/$epoch" $loserSha 2>$null | Out-Null
+      __df_debug "reconcile: $repo pinned loser $loserSha for $path"
+    }
+    $ls = if ($loserSha) { $loserSha } else { 'none' }
+    Add-Content -LiteralPath $logf -Value ("{0}`t{1}`twinner={2}`tloser={3}" -f $ts, $path, $winner, $ls)
+  }
+
+  # Never leave the tree mid-merge.
+  $residual = @(git --git-dir="$gd" --work-tree="$env:HOME" diff --name-only --diff-filter=U 2>$null | Where-Object { $_ -ne '' })
+  if ($residual.Count -gt 0) { git --git-dir="$gd" --work-tree="$env:HOME" add -A 2>$null | Out-Null }
+
+  git --git-dir="$gd" --work-tree="$env:HOME" commit --no-edit -q 2>$null | Out-Null
+  if ($LASTEXITCODE -ne 0) { git --git-dir="$gd" --work-tree="$env:HOME" commit --no-edit -q --allow-empty 2>$null | Out-Null }
+  __df_debug "reconcile: $repo merge resolved + committed"
+  return $true
+}
+
 # --- The generic tick (node 4): single-writer add -> commit -> push. ---
 # Tick ONE repo. Gated by <repo>.tick (default OFF). Staging is SCOPED to the repo's own
 # tracked territory (never `git add -A` across all of $HOME). Push only if an upstream exists.
@@ -163,12 +257,24 @@ function __df_tick_one($repo) {
     __df_debug "tick: $repo committed"
   }
 
-  # --- push only if an upstream is configured (never fail the tick if none) ---
-  git --git-dir="$gd" --work-tree="$HOME" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>$null | Out-Null
+  # --- reconcile with origin, then push (bounded retry); never block. ---
+  git --git-dir="$gd" --work-tree="$env:HOME" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>$null | Out-Null
   if ($LASTEXITCODE -eq 0) {
-    git --git-dir="$gd" --work-tree="$HOME" push -q 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) { __df_debug "tick: $repo pushed" }
-    else { __df_debug "tick: $repo push failed (skipping; reconcile is node 5)"; return $false }
+    $branch = (git --git-dir="$gd" symbolic-ref --short -q HEAD 2>$null | Out-String).Trim()
+    if (-not $branch) { __df_debug "tick: $repo detached HEAD -> skip push"; return $true }
+    $attempt = 0; $max = 3; $pushed = $false
+    while ($attempt -lt $max) {
+      $attempt++
+      if (-not (__df_reconcile $repo $gd $branch)) { __df_debug "tick: $repo reconcile said skip push (attempt $attempt)"; break }
+      git --git-dir="$gd" --work-tree="$env:HOME" push -q origin $branch 2>$null | Out-Null
+      if ($LASTEXITCODE -eq 0) { __df_debug "tick: $repo pushed (attempt $attempt)"; $pushed = $true; break }
+      __df_debug "tick: $repo push rejected (attempt $attempt) -> re-reconcile"
+    }
+    if (-not $pushed) {
+      __df_debug "tick: $repo push not completed after $attempt attempt(s) -> logged + skipped"
+      [Console]::Error.WriteLine("dotfiles: ${repo}: push to origin/${branch} not completed this tick (will retry next tick)")
+      return $false
+    }
   } else {
     __df_debug "tick: $repo no upstream configured -> skip push"
   }
@@ -192,10 +298,70 @@ function __df_tick {
   $global:LASTEXITCODE = $rc
 }
 
-# --- Heavy verbs: implemented in later build-tree nodes (5-8). Stubbed but routable. ---
+# --- Heavy verbs: -doctor stubbed (node 7); -show/-resolve implemented (node 5). ---
 function __df_doctor  { [Console]::Error.WriteLine('dotfiles -doctor: not implemented yet (build node 7)');  $global:LASTEXITCODE = 3 }
-function __df_show    { [Console]::Error.WriteLine('dotfiles -show: not implemented yet (build node 5)');    $global:LASTEXITCODE = 3 }
-function __df_resolve { [Console]::Error.WriteLine('dotfiles -resolve: not implemented yet (build node 5)'); $global:LASTEXITCODE = 3 }
+
+# -show: print each repo's recorded conflicts (state/<repo>/conflicts.log), or "(no conflicts)".
+function __df_show {
+  $base = __df_reposdir
+  if (-not (Test-Path -LiteralPath $base)) { Write-Output '(no conflicts)'; $global:LASTEXITCODE = 0; return }
+  foreach ($d in Get-ChildItem -Directory -LiteralPath $base) {
+    if (-not (__df_is_repo $d.FullName)) { continue }
+    $repo = $d.Name
+    $logf = __df_conflicts_log $repo
+    if ((Test-Path -LiteralPath $logf) -and ((Get-Item -LiteralPath $logf).Length -gt 0)) {
+      foreach ($line in (Get-Content -LiteralPath $logf)) {
+        if ($line -ne '') { Write-Output ("{0}:`t{1}" -f $repo, $line) }
+      }
+    } else {
+      Write-Output ("{0}:`t(no conflicts)" -f $repo)
+    }
+  }
+  $global:LASTEXITCODE = 0
+}
+
+# -resolve <path>: find the most recent pinned loser for <path>, write its blob beside the
+# live file as <path>.loser, print a winner-vs-loser header. Exit 0; exit 1 if none recorded.
+function __df_resolve {
+  $path = if ($args.Count -ge 1) { $args[0] } else { $null }
+  if (-not $path) { [Console]::Error.WriteLine('dotfiles -resolve: usage: dotfiles -resolve <path>'); $global:LASTEXITCODE = 2; return }
+  # Normalize to a repo-relative path (strip a leading $HOME or ~/). Compare with forward slashes.
+  $homeFwd = ($env:HOME -replace '\\', '/')
+  $pFwd = ($path -replace '\\', '/')
+  if ($pFwd.StartsWith("$homeFwd/")) { $path = $pFwd.Substring($homeFwd.Length + 1) }
+  elseif ($pFwd.StartsWith('~/'))    { $path = $pFwd.Substring(2) }
+  else { $path = $pFwd }
+  $enc = __df_ref_enc $path
+
+  $base = __df_reposdir
+  if (-not (Test-Path -LiteralPath $base)) { [Console]::Error.WriteLine('dotfiles -resolve: no repos'); $global:LASTEXITCODE = 1; return }
+  $bestEpoch = -1; $bestRef = $null; $bestRepo = $null; $bestGd = $null
+  foreach ($d in Get-ChildItem -Directory -LiteralPath $base) {
+    if (-not (__df_is_repo $d.FullName)) { continue }
+    $gd = $d.FullName
+    foreach ($ref in (git --git-dir="$gd" for-each-ref --format='%(refname)' "refs/sync-losers/$enc" 2>$null)) {
+      $epoch = $ref.Substring($ref.LastIndexOf('/') + 1)
+      if ($epoch -notmatch '^[0-9]+$') { continue }
+      if ([long]$epoch -gt $bestEpoch) { $bestEpoch = [long]$epoch; $bestRef = $ref; $bestRepo = $d.Name; $bestGd = $gd }
+    }
+  }
+  if (-not $bestRef) { [Console]::Error.WriteLine("dotfiles -resolve: no recorded loser for $path"); $global:LASTEXITCODE = 1; return }
+
+  $loserSha = (git --git-dir="$bestGd" rev-parse --verify -q $bestRef 2>$null | Out-String).Trim()
+  # Extract the path's blob WITHOUT the <rev>:<path> colon syntax (Git-for-Windows mangles it).
+  $blob = (git --git-dir="$bestGd" ls-tree -r $loserSha -- "$path" 2>$null | ForEach-Object { ($_ -split '\s+')[2] } | Select-Object -First 1)
+  $out = Join-Path $env:HOME "$path.loser"
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $out) | Out-Null
+  if ($blob) {
+    git --git-dir="$bestGd" cat-file -p $blob 2>$null | Set-Content -LiteralPath $out
+  } else {
+    Set-Content -LiteralPath $out -Value '' -NoNewline
+  }
+  Write-Output ("clash in repo {0}   loser={1}" -f $bestRepo, $loserSha)
+  Write-Output ("--- winner (current file) ---     --- loser ({0}) ---" -f $loserSha)
+  Write-Output ("loser written to: {0}   (merge by hand, then rm it)" -f $out)
+  $global:LASTEXITCODE = 0
+}
 
 function dotfiles {
   if ($args.Count -eq 0) { __df_ls; return }

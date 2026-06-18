@@ -132,6 +132,124 @@ __df_update() {
 
 __df_timer() { bash "$DOTFILES_COMMON/timer/dotfiles-timer.sh" "$@"; }
 
+# --- Node 5: never-block reconcile + surfaced resolution ------------------------------
+# State (loser log) lives under ~/.dotfiles/state/<repo>/ — LOCAL ONLY, never pushed.
+__df_state_dir()  { printf '%s/state/%s' "$DOTFILES_ROOT" "$1"; }
+__df_conflicts_log() { printf '%s/conflicts.log' "$(__df_state_dir "$1")"; }
+
+# Encode an arbitrary repo path into a single git-ref-safe component (refs can't contain
+# leading dots, '..', or end in '.lock'; collapsing every non-alphanumeric to '_' avoids all).
+__df_ref_enc() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/_/g'; }
+
+# Reconcile the local branch with origin's tip, NEVER blocking. Run AFTER the local commit
+# and BEFORE push, inside __df_tick_one. Returns 0 if a push should be attempted, 1 to skip.
+# Steps: fetch -> if behind, merge --no-commit --no-ff FETCH_HEAD; auto-merge non-overlapping
+# edits; resolve true clashes by newest committer-date (pin+log the loser); edit-beats-delete
+# for modify/delete; commit the merge. Unrelated histories -> REFUSE (abort, log, skip: node 6
+# owns recovery, but we must never force a wrong merge).
+__df_reconcile() {
+  local repo="$1" gd="$2" branch="$3"
+  local g; # shorthand prefix used inline below
+
+  # Fetch the upstream branch. Network/remote failure -> caller skips push (never blocks).
+  if ! git --git-dir="$gd" --work-tree="$HOME" fetch -q origin "$branch" 2>/dev/null; then
+    __df_debug "reconcile: $repo fetch failed -> skip push this tick"
+    return 1
+  fi
+
+  # Nothing fetched (no such ref yet) -> nothing to merge; push will create/seed it.
+  local theirs
+  theirs="$(git --git-dir="$gd" rev-parse --verify -q FETCH_HEAD 2>/dev/null)" || { __df_debug "reconcile: $repo no FETCH_HEAD"; return 0; }
+  local ours
+  ours="$(git --git-dir="$gd" rev-parse --verify -q HEAD 2>/dev/null)"
+
+  # Already up to date or strictly ahead (their tip is our ancestor) -> no merge needed.
+  if git --git-dir="$gd" merge-base --is-ancestor "$theirs" "$ours" 2>/dev/null; then
+    __df_debug "reconcile: $repo already contains origin tip -> no merge"
+    return 0
+  fi
+
+  # Unrelated histories -> REFUSE (node 6 owns true recovery; never force a wrong merge).
+  if ! git --git-dir="$gd" merge-base "$ours" "$theirs" >/dev/null 2>&1; then
+    printf 'dotfiles: %s: unrelated histories with origin/%s; refusing to merge (manual action needed)\n' "$repo" "$branch" >&2
+    __df_debug "reconcile: $repo unrelated histories -> refuse, skip push"
+    return 1
+  fi
+
+  # Try the merge without committing or fast-forwarding so we can resolve clashes ourselves.
+  if git --git-dir="$gd" --work-tree="$HOME" merge --no-commit --no-ff "$theirs" >/dev/null 2>&1; then
+    # Clean auto-merge (incl. same-file/different-lines). Commit it.
+    git --git-dir="$gd" --work-tree="$HOME" commit --no-edit -q >/dev/null 2>&1 \
+      || git --git-dir="$gd" --work-tree="$HOME" commit --no-edit -q --allow-empty >/dev/null 2>&1
+    __df_debug "reconcile: $repo clean merge"
+    return 0
+  fi
+
+  # Conflicts exist. Resolve EACH conflicted path, never blocking.
+  local ts host
+  ts="$(date --iso-8601=seconds 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
+  host="$(hostname 2>/dev/null || printf '%s' "${HOSTNAME:-unknown}")"
+  local sdir; sdir="$(__df_state_dir "$repo")"; mkdir -p "$sdir"
+  local logf; logf="$(__df_conflicts_log "$repo")"
+  local epoch; epoch="$(date +%s 2>/dev/null || printf '0')"
+
+  local conflicted path
+  conflicted="$(git --git-dir="$gd" --work-tree="$HOME" diff --name-only --diff-filter=U 2>/dev/null)"
+  local IFS_SAVE="$IFS"; IFS='
+'
+  for path in $conflicted; do
+    IFS="$IFS_SAVE"
+    local has_ours has_theirs winner loser_sha enc
+    has_ours="$(git --git-dir="$gd" --work-tree="$HOME" ls-files -u -- "$path" | awk '$3==2{print 1}' | head -n1)"
+    has_theirs="$(git --git-dir="$gd" --work-tree="$HOME" ls-files -u -- "$path" | awk '$3==3{print 1}' | head -n1)"
+
+    if [ -n "$has_ours" ] && [ -n "$has_theirs" ]; then
+      # Content conflict: newest committer-date wins (per side's last commit touching the path).
+      local od td
+      od="$(git --git-dir="$gd" log -1 --format=%ct "$ours"   -- "$path" 2>/dev/null)"; od="${od:-0}"
+      td="$(git --git-dir="$gd" log -1 --format=%ct "$theirs" -- "$path" 2>/dev/null)"; td="${td:-0}"
+      if [ "$td" -gt "$od" ]; then
+        winner=theirs; loser_sha="$ours"
+        git --git-dir="$gd" --work-tree="$HOME" checkout --theirs -- "$path" >/dev/null 2>&1
+      else
+        # Tie or ours newer -> ours wins (deterministic: committer-date, then ours-on-tie).
+        winner=ours;   loser_sha="$theirs"
+        git --git-dir="$gd" --work-tree="$HOME" checkout --ours -- "$path" >/dev/null 2>&1
+      fi
+    elif [ -n "$has_ours" ]; then
+      # modify/delete: ours edited, theirs deleted -> edit-beats-delete (keep ours).
+      winner=ours; loser_sha="$theirs"
+      git --git-dir="$gd" --work-tree="$HOME" checkout --ours -- "$path" >/dev/null 2>&1
+    else
+      # modify/delete: theirs edited, ours deleted -> edit-beats-delete (keep theirs).
+      winner=theirs; loser_sha="$ours"
+      git --git-dir="$gd" --work-tree="$HOME" checkout --theirs -- "$path" >/dev/null 2>&1
+    fi
+
+    git --git-dir="$gd" --work-tree="$HOME" add -- "$path" >/dev/null 2>&1
+    # Pin the losing side (LOCAL ref) so it is recoverable; record it in the local log.
+    enc="$(__df_ref_enc "$path")"
+    if [ -n "$loser_sha" ]; then
+      git --git-dir="$gd" update-ref "refs/sync-losers/$enc/$epoch" "$loser_sha" 2>/dev/null \
+        && __df_debug "reconcile: $repo pinned loser $loser_sha for $path"
+    fi
+    printf '%s\t%s\twinner=%s\tloser=%s\n' "$ts" "$path" "$winner" "${loser_sha:-none}" >> "$logf"
+  done
+  IFS="$IFS_SAVE"
+
+  # Any remaining unmerged paths? (Shouldn't be — but never leave the tree mid-merge.)
+  if [ -n "$(git --git-dir="$gd" --work-tree="$HOME" diff --name-only --diff-filter=U 2>/dev/null)" ]; then
+    __df_debug "reconcile: $repo residual conflicts; staging current work-tree"
+    git --git-dir="$gd" --work-tree="$HOME" add -A >/dev/null 2>&1
+  fi
+
+  # Commit the merge (never --edit; never block on an editor).
+  git --git-dir="$gd" --work-tree="$HOME" commit --no-edit -q >/dev/null 2>&1 \
+    || git --git-dir="$gd" --work-tree="$HOME" commit --no-edit -q --allow-empty >/dev/null 2>&1
+  __df_debug "reconcile: $repo merge resolved + committed"
+  return 0
+}
+
 # --- The generic tick (node 4): single-writer add -> commit -> push. ---
 # Tick ONE repo. Gated by <repo>.tick (default OFF). Staging is SCOPED to the repo's own
 # tracked territory (never `git add -A` across all of $HOME). Push only if an upstream exists.
@@ -196,12 +314,35 @@ __df_tick_one() {
     __df_debug "tick: $repo committed"
   fi
 
-  # --- push only if an upstream is configured (never fail the tick if none) ---
+  # --- reconcile with origin, then push (bounded retry); never block. ---
+  # Only repos with an upstream participate in fetch/merge/push.
   if git --git-dir="$gd" --work-tree="$HOME" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1; then
-    if git --git-dir="$gd" --work-tree="$HOME" push -q; then
-      __df_debug "tick: $repo pushed"
-    else
-      __df_debug "tick: $repo push failed (skipping; reconcile is node 5)"
+    # Derive the branch from HEAD (detached HEAD has no branch to sync -> skip; node 6 surfaces it).
+    local branch
+    branch="$(git --git-dir="$gd" symbolic-ref --short -q HEAD 2>/dev/null)"
+    if [ -z "$branch" ]; then
+      __df_debug "tick: $repo detached HEAD -> skip push (no branch to sync)"
+      return 0
+    fi
+    # Bounded push loop: reconcile (fetch+never-block merge) then push; on non-fast-forward
+    # rejection, re-reconcile and retry. After the ceiling, LOG + skip (do NOT fail the tick).
+    local attempt=0 max=3 pushed=0
+    while [ "$attempt" -lt "$max" ]; do
+      attempt=$((attempt+1))
+      if ! __df_reconcile "$repo" "$gd" "$branch"; then
+        __df_debug "tick: $repo reconcile said skip push (attempt $attempt)"
+        break
+      fi
+      if git --git-dir="$gd" --work-tree="$HOME" push -q origin "$branch" 2>/dev/null; then
+        __df_debug "tick: $repo pushed (attempt $attempt)"
+        pushed=1
+        break
+      fi
+      __df_debug "tick: $repo push rejected (attempt $attempt) -> re-reconcile"
+    done
+    if [ "$pushed" -ne 1 ]; then
+      __df_debug "tick: $repo push not completed after $attempt attempt(s) -> logged + skipped (work-tree intact)"
+      printf 'dotfiles: %s: push to origin/%s not completed this tick (will retry next tick)\n' "$repo" "$branch" >&2
       return 1
     fi
   else
@@ -228,10 +369,85 @@ __df_tick() {
   return "$rc"
 }
 
-# --- Heavy verbs: implemented in later build-tree nodes (5-8). Stubbed but routable. ---
+# --- Heavy verbs: -doctor stubbed (node 7); -show/-resolve implemented (node 5). ---
 __df_doctor()  { printf 'dotfiles -doctor: not implemented yet (build node 7)\n' >&2; return 3; }
-__df_show()    { printf 'dotfiles -show: not implemented yet (build node 5)\n' >&2; return 3; }
-__df_resolve() { printf 'dotfiles -resolve: not implemented yet (build node 5)\n' >&2; return 3; }
+
+# -show: print each repo's recorded conflicts (state/<repo>/conflicts.log), or "(no conflicts)".
+# Greppable: one "<repo>:\t<logline>" per clash. LOCAL state only.
+__df_show() {
+  local base d repo logf any=0
+  base="$(__df_repos_dir)"
+  [ -d "$base" ] || { printf '(no conflicts)\n'; return 0; }
+  for d in "$base"/*/; do
+    [ -d "$d" ] || continue
+    repo="$(basename "$d")"
+    __df_is_repo "$d" || continue
+    logf="$(__df_conflicts_log "$repo")"
+    if [ -s "$logf" ]; then
+      any=1
+      while IFS= read -r line; do
+        [ -n "$line" ] && printf '%s:\t%s\n' "$repo" "$line"
+      done < "$logf"
+    else
+      printf '%s:\t(no conflicts)\n' "$repo"
+    fi
+  done
+  [ "$any" -eq 0 ] && __df_debug "show: no conflicts recorded in any repo"
+  return 0
+}
+
+# -resolve <path>: find the most recent pinned loser for <path> across repos, write its
+# blob beside the live file as <path>.loser, and print a winner-vs-loser header. Exit 0;
+# clear message + exit 1 if no loser is recorded for that path.
+__df_resolve() {
+  local path="$1"
+  if [ -z "$path" ]; then
+    printf 'dotfiles -resolve: usage: dotfiles -resolve <path>\n' >&2
+    return 2
+  fi
+  # Normalize to a repo-relative path (strip a leading $HOME/ or ~/).
+  case "$path" in
+    "$HOME"/*) path="${path#"$HOME"/}" ;;
+    "~/"*)     path="${path#~/}" ;;
+  esac
+  local enc; enc="$(__df_ref_enc "$path")"
+  local base d repo gd best_repo="" best_gd="" best_ref="" best_epoch=-1 ref epoch
+  base="$(__df_repos_dir)"
+  [ -d "$base" ] || { printf 'dotfiles -resolve: no repos\n' >&2; return 1; }
+  for d in "$base"/*/; do
+    [ -d "$d" ] || continue
+    repo="$(basename "$d")"; gd="$d"
+    __df_is_repo "$gd" || continue
+    # Most-recent loser = highest epoch suffix under refs/sync-losers/<enc>/.
+    for ref in $(git --git-dir="$gd" for-each-ref --format='%(refname)' "refs/sync-losers/$enc" 2>/dev/null); do
+      epoch="${ref##*/}"
+      case "$epoch" in ''|*[!0-9]*) continue ;; esac
+      if [ "$epoch" -gt "$best_epoch" ]; then
+        best_epoch="$epoch"; best_ref="$ref"; best_repo="$repo"; best_gd="$gd"
+      fi
+    done
+  done
+  if [ -z "$best_ref" ]; then
+    printf 'dotfiles -resolve: no recorded loser for %s\n' "$path" >&2
+    return 1
+  fi
+  local loser_sha blob
+  loser_sha="$(git --git-dir="$best_gd" rev-parse --verify -q "$best_ref" 2>/dev/null)"
+  # Extract the path's blob from the loser commit WITHOUT the <rev>:<path> colon syntax
+  # (Git-for-Windows mangles the colon). Use ls-tree to find the blob, cat-file to dump it.
+  blob="$(git --git-dir="$best_gd" ls-tree -r "$loser_sha" -- "$path" 2>/dev/null | awk '{print $3}' | head -n1)"
+  local out="$HOME/$path.loser"
+  mkdir -p "$(dirname "$out")"
+  if [ -n "$blob" ]; then
+    git --git-dir="$best_gd" cat-file -p "$blob" > "$out" 2>/dev/null
+  else
+    : > "$out"   # loser had no blob (it was the delete side); empty .loser marks that.
+  fi
+  printf 'clash in repo %s   loser=%s\n' "$best_repo" "$loser_sha"
+  printf -- '--- winner (current file) ---     --- loser (%s) ---\n' "$loser_sha"
+  printf 'loser written to: %s   (merge by hand, then rm it)\n' "$out"
+  return 0
+}
 
 dotfiles() {
   local root="$DOTFILES_ROOT" tok verb repo

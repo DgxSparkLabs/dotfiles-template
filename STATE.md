@@ -35,18 +35,41 @@ Branch: `feat/sync-multi-repo-engine`. Build order = the plan's "Build order —
   (L1.1-L1.6, L2.1). Local: bash 13/13, pwsh 13/13. Fixed a dispatcher bug: PS `$rest` slice
   unrolled to a scalar string -> `@rest` exploded char-by-char (now `[object[]] $rest`).
 
+- **Node 5 (never-block reconcile + surfaced resolution)** — inserted `__df_reconcile` BETWEEN
+  the local commit and push inside `__df_tick_one` (commit-before-merge preserved). Per tick with
+  an upstream: derive branch from HEAD (detached -> skip), then a bounded push loop (3): reconcile
+  (`fetch origin <branch>`; if behind, `merge --no-commit --no-ff FETCH_HEAD`), then push; on
+  non-fast-forward rejection re-reconcile + retry; after the ceiling LOG + skip (never fail the
+  tick, never block, work-tree intact). Reconcile resolution: non-overlapping edits auto-merge;
+  same-line clash -> newest committer-date wins (compare `log -1 --format=%ct <side> -- <path>`,
+  `checkout --ours/--theirs`, ties -> ours), loser pinned to LOCAL `refs/sync-losers/<enc>/<epoch>`
+  (path encoded non-alnum->`_` for ref-safety) + appended to `state/<repo>/conflicts.log` (LOCAL,
+  outside the work-tree, never pushed); modify/delete -> edit-beats-delete (stage 2/3 detection via
+  `ls-files -u`); unrelated histories -> REFUSE (surface + skip, node 6 owns recovery). FETCH_HEAD
+  used (bare-clone ref mapping per PITFALLS). Implemented `-show` (per-repo conflicts.log or
+  "(no conflicts)", greppable) and `-resolve <path>` (most-recent loser ref across repos -> write
+  `<path>.loser` from the loser blob via ls-tree/cat-file, print winner-vs-loser header). Harness
+  gained multi-machine helpers (`mk_machine`/`Mk-Machine` build machine N the init+remote-add way
+  for a real upstream, `tick_machine`, `write/read/pull_machine`). New `tests/test_merge.{sh,ps1}`
+  (L2.2-L2.13). Local: bash full suite 95/95 (merge 49), pwsh full suite 92/92 (merge 49), 0 SKIP.
+  Note (PITFALLS): a plain `git clone --bare` sets NO fetch refspec -> no upstream; build the 2nd
+  machine with init --bare + remote add + fetch + checkout -B like machine 1. L2.10 forces
+  push-exhaust deterministically with a `pre-push` hook that exits 1 (no timing race).
+
 ## CI status
+- Node 5 NOT YET pushed/CI-verified (orchestrator pushes + verifies). Prior:
 - Branch pushed; `unit` workflow GREEN on ubuntu + macos + windows (run 27781322623).
   bash (linux/mac/win-gitbash), zsh (macos), pwsh (all) all pass. The CI loop is proven.
 - (Benign annotation: actions/checkout@v4 Node20 deprecation — bump to @v5 sometime.)
 
 ## Next
-- **Node 5** never-block merge + surfaced resolution: fetch→merge (newest-wins by committer-date,
-  loser pinned to `refs/sync-losers/*` + `state/<repo>/conflicts.log`), modify/delete fallback,
-  `-show`/`-resolve`. The node-4 tick is single-writer only (no fetch/merge yet); node 5 adds the
-  multi-writer reconcile between step "commit" and "push" in `__df_tick_one`.
-- Then nodes 6 (robustness) → 7 (doctor) → 8 (hooks) → 9 (timer) → 10 (migration/bootstrap)
-  → 11 (interop) → 12 (README).
+- **Node 6** robustness invariants: pre-step-1 stale-state recovery (abort leftover merge, clear
+  aged `index.lock` with pid guard), discovery validates each bare-repos/* is a real git-dir,
+  malformed-config / unrelated-histories safe REFUSE (node 5 already REFUSEs unrelated histories
+  in reconcile; node 6 adds the full L5 battery + index.lock/MERGE_HEAD recovery + concurrent-tick
+  lock). Gate: L5.* robustness cases.
+- Then nodes 7 (doctor) → 8 (hooks) → 9 (timer) → 10 (migration/bootstrap) → 11 (interop)
+  → 12 (README).
 
 ## How to run tests
 - bash: `bash tests/run.sh bash`  (zsh: `zsh tests/run.sh zsh`)

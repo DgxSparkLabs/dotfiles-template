@@ -2,24 +2,31 @@
 
 Branch: feat/sync-multi-repo-engine
 
-## Last node DONE (CI-verified green: run 27782906786, ubuntu+macos+windows success)
-- **Node 4** — generic tick, SINGLE-WRITER path. Commit 142e3b9. `__df_tick`/`__df_tick_one` in both
-  dispatchers (stub replaced). Gated by `__df_setting_tick` (default OFF). Stage scoped
-  via `__df_setting_add`: `-u` tracked, or `-A` scoped to the repo's OWN tracked dirs
-  (derived from `git ls-files` parent dirs) so it NEVER stages across $HOME / sibling repos.
-  Commit only if staged; push only if upstream exists (else log+skip, never fail).
-  `-tick` (no arg) loops `bare-repos/*` with fail-isolation; `-tick <repo>` ticks one.
-  Harness: `mk_repo_with_origin`/`Mk-RepoWithOrigin` + `origin_dir`/`origin_tip` helpers.
-  Tests: tests/test_tick.{sh,ps1} (L1.1-L1.6, L2.1). Local: bash 13/13 + full suite 46/46,
-  pwsh 13/13 + full suite 43/43. No SKIPs.
-- Dispatcher fix (PS): `[object[]] $rest = if (...)` — a one-element slice was unrolling to a
-  scalar string and `@rest` exploded it char-by-char (recorded in PITFALLS).
+## Last node DONE (local green; NOT yet CI-verified — orchestrator pushes + verifies)
+- **Node 5** — never-block reconcile + surfaced resolution. `__df_reconcile` inserted BETWEEN the
+  local commit and push in `__df_tick_one` (commit-before-merge preserved). With an upstream:
+  derive branch from HEAD (detached -> skip), bounded push loop (3): reconcile (fetch origin
+  <branch>; if behind, `merge --no-commit --no-ff FETCH_HEAD`) then push; non-ff rejection ->
+  re-reconcile + retry; after ceiling LOG + skip (never fail tick, never block, work-tree intact).
+  Resolution: non-overlapping auto-merge; same-line clash -> newest committer-date wins (compare
+  `log -1 --format=%ct`; ties -> ours), loser pinned to LOCAL `refs/sync-losers/<enc>/<epoch>`
+  (path non-alnum->`_`) + appended to `state/<repo>/conflicts.log` (LOCAL, never pushed);
+  modify/delete -> edit-beats-delete (ls-files -u stage 2/3); unrelated histories -> REFUSE.
+  Implemented `-show` (per-repo conflicts.log, greppable) + `-resolve <path>` (newest loser ref
+  across repos -> `<path>.loser` via ls-tree/cat-file + winner/loser header). Both shells kept
+  semantically identical. Harness: `mk_machine`/`Mk-Machine` (+ tick/write/read/pull_machine).
+  Tests: tests/test_merge.{sh,ps1} (L2.2-L2.13). Local: bash 95/95 (merge 49), pwsh 92/92
+  (merge 49), 0 SKIP. Existing dispatcher/config/tick suites still green.
 
 ## Next node (UNBLOCKED)
-- **Node 5** — never-block merge + surfaced resolution. Insert fetch→merge (newest-wins by
-  committer-date, loser pinned to refs/sync-losers/* + state/<repo>/conflicts.log) plus a
-  modify/delete tree-conflict fallback BETWEEN commit and push inside `__df_tick_one`; then
-  implement `-show`/`-resolve` (currently exit-3 stubs). Gate: L2.2-L2.13, L5.* merge cases.
+- **Node 6** — robustness invariants. Pre-step-1 stale-state recovery (abort leftover merge; clear
+  aged index.lock with pid guard), discovery git-dir validation already partly present
+  (`__df_is_repo`); add the full L5 BAD-path battery (L5.1-L5.28): missing config/engine/bare-repos,
+  malformed config (already safe-refuses), corrupted/non-git/non-bare repos skipped fail-isolated,
+  detached/missing-branch/no-upstream handling, unrelated histories (node 5 already REFUSEs in
+  reconcile — add the explicit test + work-tree-untouched assert), index.lock/MERGE_HEAD recovery,
+  concurrent-tick lock, read-only paths.
 
 ## Do NOT
-- re-run a completed node; push to master; weaken tests; `git add -A` unscoped across $HOME.
+- re-run a completed node; push to master; weaken tests; `git add -A` unscoped across $HOME;
+  push `refs/sync-losers/*` or `state/*/conflicts.log` to any synced branch (LOCAL only).
