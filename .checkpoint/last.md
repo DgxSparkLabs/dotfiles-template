@@ -27,7 +27,28 @@ Branch: feat/sync-multi-repo-engine
 - Local results: `bash tests/run.sh bash` 199 PASS / 0 FAIL / 6 SKIP (timer 9/0/3);
   `pwsh tests/run.ps1` 196 PASS / 0 FAIL / 4 SKIP (timer 9/0/1). No existing suite regressed.
 
-## Node 9 CI FIX (this commit — first CI run was RED on ubuntu+macOS)
+## Node 9 CI FIX #2 (this commit — ubuntu STILL RED on the live-manager asserts)
+- After CI FIX #1 the strengthened `have_systemd()` probe STILL passed on GH ubuntu (the fake
+  `systemd --user` reports running/degraded AND `list-unit-files` succeeds) — but enabling a user
+  unit there registers ZERO findable units, so L3.1/L3.14/L3.x ran and failed "expected [1] got [0]".
+- FIX (tests only): replaced the usability PROBE with a DETERMINISTIC OPT-IN gate. The LIVE-MANAGER
+  asserts now run ONLY when `DOTFILES_TIMER_LIVE` ∈ {1,true} (env unset on CI -> always SKIP).
+  - `tests/test_timer.sh`: dropped `have_systemd()`; added `timer_live()` (env check) + a shared
+    `LIVE_SKIP_REASON`. L3.1/L3.14 registered-unit count + L3.x enable/disable/status/logs gate on
+    `timer_live`; otherwise `_skip` with the named reason. Artifact-content count asserts
+    (one .timer + one .service generated) and the direct `dotfiles -tick` fan-out STAY real.
+  - `tests/test_timer.ps1`: added `Timer-Live` (= `DOTFILES_TIMER_LIVE` opt-in AND admin session) +
+    `$LiveSkipReason`. L3.1/L3.14 registered-task count + L3.x enable/disable gate on `Timer-Live`;
+    the non-admin file-presence fallback (launcher+loop+payload count) stays real. Reason named.
+  - `unit.yml` UNCHANGED — it does NOT set `DOTFILES_TIMER_LIVE`, so CI skips the live bits.
+  - Real on every leg (never skipped): L3.4 (payload calls `-tick` + direct fan-out advances 2
+    enabled repos, disabled untouched), L3.9, L3.11/L3.11b (interval+jitter in artifact),
+    L3.12 (unit PATH injection), L3.13 (Win non-admin VBS+loop). Run live on a real box with
+    `DOTFILES_TIMER_LIVE=1 bash tests/run.sh bash`.
+  - Local re-verify (Windows; live bits SKIP as on CI): bash 199/0/6 (timer 9/0/3),
+    pwsh 196/0/4 (timer 9/0/1), 0 FAIL.
+
+## Node 9 CI FIX #1 (first CI run was RED on ubuntu+macOS)
 - `timer/dotfiles-timer.sh`: removed `sed -i` payload substitution (BSD/macOS sed misparse left
   `@TIMER_JITTER@` literal -> L3.11/L3.11b "got [0]"). Payload now baked via unquoted heredoc header
   + quoted body. Artifacts written BEFORE best-effort `systemctl` registration.

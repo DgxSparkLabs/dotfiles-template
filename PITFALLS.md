@@ -291,3 +291,24 @@ Traps hit during implementation. Read before editing the dispatcher/harness.
   once. (Verified locally with a `dash -c '. "$0"' "$REPO/dotfiles.sh"` repro forcing `$0` to the
   real script with DOTFILES_COMMON -> fake dir: doctor inspected the fake engine and returned the
   right rc, NOT 127.)
+- **Live OS-scheduler asserts are gated behind an explicit `DOTFILES_TIMER_LIVE` opt-in; GH runners
+  report `systemd --user` as usable but cannot register user units** (node 9 CI fix #2). A USABILITY
+  PROBE for `systemd --user` is fundamentally unreliable on GitHub ubuntu runners: even the strong
+  probe (`systemctl --user list-unit-files` succeeds AND `is-system-running` ∈ running/degraded)
+  returns TRUE there, yet `systemctl --user enable/start` of a real user unit registers/finds ZERO
+  units — so the live-manager unit-count asserts (L3.1, L3.14) and the enable->is-enabled /
+  disable->not-enabled / status / logs transitions (L3.x) RAN and FAILED "expected [1] got [0]"
+  instead of skipping. FIX (tests only, NO weakening of real asserts): make the gate DETERMINISTIC,
+  not probed — the live-manager asserts run ONLY when `DOTFILES_TIMER_LIVE` ∈ {1,true,True,TRUE}
+  (`timer_live()` in `test_timer.sh`; `Timer-Live` = opt-in AND admin in `test_timer.ps1`). The env
+  var is UNSET on CI (`unit.yml` must never set it), so CI always takes the NAMED SKIP
+  ("live OS-scheduler registration asserts require DOTFILES_TIMER_LIVE=1 — real
+  systemd/launchd/admin session; GH runners cannot register user units"). The asserts are NOT
+  deleted — a real machine runs them via `DOTFILES_TIMER_LIVE=1 bash tests/run.sh bash`. What stays
+  REAL on every leg (proves the node's deliverable WITHOUT a live scheduler): L3.4 (payload contains
+  `dotfiles -tick` + a direct `dotfiles -tick` advances the 2 enabled repos, leaves the disabled one
+  untouched), L3.9, L3.11/L3.11b (interval+jitter baked into the artifact), L3.12 (Linux unit embeds
+  PATH injection), L3.13 (Win non-admin VBS+loop), and the file-content singleton counts (one
+  .timer + one .service / launcher+loop+payload). GENERAL RULE: when a CI sandbox reports a
+  service-manager "available" but can't actually register a unit, do NOT chase a cleverer
+  probe — gate the live asserts behind an explicit opt-in env var that CI never sets.

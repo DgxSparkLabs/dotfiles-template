@@ -191,9 +191,25 @@ Branch: `feat/sync-multi-repo-engine`. Build order = the plan's "Build order —
   - Local re-verify (Windows, both probes SKIP live bits as on CI): bash 199/0/6 (timer 9/0/3),
     pwsh 196/0/4 (timer 9/0/1), 0 FAIL. Committed (NOT pushed); orchestrator re-verifies CI.
 
+- **Node 9 CI FIX #2 (ubuntu STILL RED -> deterministic opt-in gate)** — CI FIX #1's strengthened
+  `have_systemd()` probe STILL passed on GH ubuntu (the fake `systemd --user` answers
+  `list-unit-files` AND reports running/degraded) while enabling a user unit registered ZERO findable
+  units, so L3.1/L3.14/L3.x ran and failed "expected [1] got [0]" again. FIX (tests only): replaced
+  the usability PROBE with a DETERMINISTIC OPT-IN — the live-manager asserts run ONLY when
+  `DOTFILES_TIMER_LIVE` ∈ {1,true} (env unset on CI -> always NAMED SKIP). `test_timer.sh` dropped
+  `have_systemd()` for `timer_live()` + shared `LIVE_SKIP_REASON`; `test_timer.ps1` added `Timer-Live`
+  (= opt-in AND admin) + `$LiveSkipReason`. `unit.yml` UNCHANGED (never sets the var). Asserts are NOT
+  deleted — real machine runs them via `DOTFILES_TIMER_LIVE=1 bash tests/run.sh bash`. REAL on every
+  leg: L3.4 (payload `-tick` + direct fan-out: 2 enabled advance, disabled untouched), L3.9,
+  L3.11/L3.11b (interval+jitter artifact), L3.12 (unit PATH), L3.13 (Win VBS+loop), file-content
+  singleton counts. Local re-verify (Windows; live bits SKIP as on CI): bash 199/0/6 (timer 9/0/3),
+  pwsh 196/0/4 (timer 9/0/1), 0 FAIL. Committed (NOT pushed); orchestrator re-verifies CI.
+
 ## CI status
-- Node 9 CI FIX committed locally (artifacts-before-registration + strong systemd probe + no
-  XDG_RUNTIME_DIR); NOT YET pushed/CI-verified (orchestrator re-verifies). Prior:
+- Node 9 CI FIX #2 committed locally (live-manager asserts gated behind `DOTFILES_TIMER_LIVE`
+  opt-in; usability probe removed); NOT YET pushed/CI-verified (orchestrator re-verifies). Prior:
+- Node 9 CI FIX #1 committed (artifacts-before-registration + strong systemd probe + no
+  XDG_RUNTIME_DIR) — strong probe still let ubuntu live asserts run/fail; superseded by FIX #2. Prior:
 - Node 9 first CI run RED on ubuntu+macOS (sed -i + weak systemd probe) — now fixed. Prior:
 - Node 8 NOT YET pushed/CI-verified (orchestrator pushes + verifies). Prior:
 - Node 7 CI-VERIFIED GREEN: run 27791782158, ubuntu+macos+windows ALL success. Prior:
