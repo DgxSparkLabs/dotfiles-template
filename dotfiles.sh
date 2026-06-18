@@ -148,6 +148,14 @@ __df_ref_enc() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/_/g'; }
 # for modify/delete; commit the merge. Unrelated histories -> REFUSE (abort, log, skip: node 6
 # owns recovery, but we must never force a wrong merge).
 __df_reconcile() {
+  # CRITICAL (zsh): zsh does NOT word-split unquoted "$var"/"$(cmd)" on whitespace by default
+  # (bash does). The per-path conflict loop below relies on splitting newline-delimited git
+  # output, and array/IFS semantics differ between shells. `emulate -L sh` LOCALLY (function
+  # scope only) switches zsh to POSIX sh word-splitting + array semantics for this function;
+  # under bash it's a no-op (the builtin doesn't exist, so `|| true` swallows the error). This
+  # keeps the SAME code correct under bash AND zsh. The loop is ALSO rewritten as a
+  # `while IFS= read -r` (belt-and-suspenders) so it never depends on word-splitting at all.
+  emulate -L sh 2>/dev/null || true
   local repo="$1" gd="$2" branch="$3"
   local g; # shorthand prefix used inline below
 
@@ -213,12 +221,14 @@ __df_reconcile() {
   local logf; logf="$(__df_conflicts_log "$repo")"
   local epoch; epoch="$(date +%s 2>/dev/null || printf '0')"
 
+  # Iterate conflicted paths via `while IFS= read -r` over newline-delimited git output. This
+  # NEVER relies on shell word-splitting of an unquoted expansion (which zsh disables by default),
+  # so each $path is exactly one repo path even under zsh. A here-doc feeds the captured output so
+  # the loop body runs in the CURRENT shell (a pipe would subshell it and lose $logf appends/state).
   local conflicted path
   conflicted="$(git -C "$W" --git-dir="$gd" --work-tree="$W" diff --name-only --diff-filter=U 2>/dev/null)"
-  local IFS_SAVE="$IFS"; IFS='
-'
-  for path in $conflicted; do
-    IFS="$IFS_SAVE"
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
     local has_ours has_theirs winner loser_sha enc
     has_ours="$(git -C "$W" --git-dir="$gd" --work-tree="$W" ls-files -u -- "$path" | awk '$3==2{print 1}' | head -n1)"
     has_theirs="$(git -C "$W" --git-dir="$gd" --work-tree="$W" ls-files -u -- "$path" | awk '$3==3{print 1}' | head -n1)"
@@ -257,8 +267,9 @@ __df_reconcile() {
         && __df_debug "reconcile: $repo pinned loser $loser_sha for $path"
     fi
     printf '%s\t%s\twinner=%s\tloser=%s\n' "$ts" "$path" "$winner" "${loser_sha:-none}" >> "$logf"
-  done
-  IFS="$IFS_SAVE"
+  done <<__DF_CONFLICTED__
+$conflicted
+__DF_CONFLICTED__
 
   # Any remaining unmerged paths? (Shouldn't be — but never leave the tree mid-merge.)
   if [ -n "$(git -C "$W" --git-dir="$gd" --work-tree="$W" diff --name-only --diff-filter=U 2>/dev/null)" ]; then
@@ -423,6 +434,9 @@ __df_show() {
 # blob beside the live file as <path>.loser, and print a winner-vs-loser header. Exit 0;
 # clear message + exit 1 if no loser is recorded for that path.
 __df_resolve() {
+  # zsh word-splitting compat (see __df_reconcile): the for-each-ref loop below iterates
+  # newline-delimited git output; zsh won't word-split it without sh emulation. Function-scoped.
+  emulate -L sh 2>/dev/null || true
   local path="$1"
   if [ -z "$path" ]; then
     printf 'dotfiles -resolve: usage: dotfiles -resolve <path>\n' >&2
@@ -441,14 +455,18 @@ __df_resolve() {
     [ -d "$d" ] || continue
     repo="$(basename "$d")"; gd="$d"
     __df_is_repo "$gd" || continue
-    # Most-recent loser = highest epoch suffix under refs/sync-losers/<enc>/.
-    for ref in $(git --git-dir="$gd" for-each-ref --format='%(refname)' "refs/sync-losers/$enc" 2>/dev/null); do
+    # Most-recent loser = highest epoch suffix under refs/sync-losers/<enc>/. Iterate via
+    # `while read` over newline-delimited refs so it never depends on shell word-splitting.
+    while IFS= read -r ref; do
+      [ -n "$ref" ] || continue
       epoch="${ref##*/}"
       case "$epoch" in ''|*[!0-9]*) continue ;; esac
       if [ "$epoch" -gt "$best_epoch" ]; then
         best_epoch="$epoch"; best_ref="$ref"; best_repo="$repo"; best_gd="$gd"
       fi
-    done
+    done <<__DF_LOSER_REFS__
+$(git --git-dir="$gd" for-each-ref --format='%(refname)' "refs/sync-losers/$enc" 2>/dev/null)
+__DF_LOSER_REFS__
   done
   if [ -z "$best_ref" ]; then
     printf 'dotfiles -resolve: no recorded loser for %s\n' "$path" >&2

@@ -95,3 +95,25 @@ Traps hit during implementation. Read before editing the dispatcher/harness.
   macOS leg is BSD sed, NOT a bash-4 builtin — `dotfiles.sh`'s `__df_reconcile` itself was already
   3.2-clean (no `${var,,}`, `mapfile`, `declare -A`, `${arr[-1]}`, `&>`, or `local -n`); the audit
   came up empty there, so the only macOS-incompat construct was the test harness's `sed -i`.
+- **zsh does NOT word-split unquoted `$var` / `$(cmd)` on whitespace by default (bash does) —
+  node-5 macOS-*zsh*-only RED.** Our CI runs both `bash tests/run.sh bash` AND `zsh tests/run.sh
+  zsh` on macOS; the bash leg (and ubuntu/windows) passed but the zsh leg failed ONLY in
+  `test_merge.sh` (L2.3/L2.4[rc128]/L2.5/L2.7/L2.12 — the clash + modify/delete + resolve
+  cluster). Root cause: `dotfiles.sh` had two loops that relied on bash word-splitting an
+  unquoted expansion of newline-delimited git output — `__df_reconcile`'s per-path conflict loop
+  (`for path in $conflicted` with a custom `IFS=$'\n'`) and `__df_resolve`'s ref loop (`for ref
+  in $(git for-each-ref ...)`). zsh leaves `SH_WORD_SPLIT` OFF, so each loop iterated ONCE with
+  the WHOLE multi-line blob as a single value. The body then fed that garbage to `git ls-files -u
+  -- "$path"` / `git log -1 --format=%ct <rev>` / `update-ref <enc>` -> empty/invalid args ->
+  `fatal: Needed a single revision` / `Not a valid object name` (same symptom as the earlier
+  work-tree-cwd and `sed -i` bugs, different cause). NOTE: this contradicts the `sed -i` entry's
+  closing claim that reconcile was fully portable — it was bash-3.2-clean (no bash-4 builtins) but
+  NOT zsh-clean; word-splitting is a shell-DIALECT divergence, not a bash-version one. FIX (both
+  belt + suspenders, applied to `__df_reconcile` AND `__df_resolve`): (1) `emulate -L sh 2>/dev/null
+  || true` as the FIRST line of each function — under zsh this function-LOCALLY switches on
+  POSIX-sh word-splitting + array semantics; under bash the builtin is absent so `|| true` makes
+  it a no-op. (2) Rewrote each loop as `while IFS= read -r x; do ...; done <<EOF\n$blob\nEOF` so it
+  never depends on word-splitting at all (the here-doc keeps the body in the CURRENT shell, unlike
+  a pipe, preserving `$logf`/`$best_*` state). Glob `for d in "$base"/*/` loops were NOT affected
+  (zsh globs by default). Production behavior on bash is identical. Verify on Windows with `bash
+  tests/run.sh bash` + `pwsh -File tests/run.ps1`; CI re-verifies the zsh leg.
