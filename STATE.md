@@ -163,17 +163,38 @@ Branch: `feat/sync-multi-repo-engine`. Build order = the plan's "Build order —
     (enable/disable/status/logs) are RESULT=SKIP with NAMED reasons ("systemd user session
     unavailable on this runner" / "Task Scheduler needs an admin/interactive session"); the macOS
     /non-Windows pwsh leg SKIPs the whole Windows backend with a named reason.
-  - **CI wiring**: FOLDED into `unit.yml` (run.{sh,ps1} auto-discover test_timer.*). Added an
-    `XDG_RUNTIME_DIR=/run/user/$(id -u)` step on the ubuntu leg so the Linux timer's live-manager
-    assertions (L3.1/L3.14 unit count, enable/disable) RUN instead of skipping. `validate-timer.yml`
-    rewritten to a manual-only no-op marked SUPERSEDED (it tested the removed baked single-repo
-    payload / `.auto-commit.sh` / `git add -u|-A`).
+  - **CI wiring**: FOLDED into `unit.yml` (run.{sh,ps1} auto-discover test_timer.*).
+    `validate-timer.yml` rewritten to a manual-only no-op marked SUPERSEDED.
   - Local: `bash tests/run.sh bash` 199/0/6 (timer 9/0/3); `pwsh tests/run.ps1` 196/0/4
     (timer 9/0/1). The timer SKIPs are the live-manager bits (no systemd session under Git-Bash;
     Task Scheduler needs admin) — all NAMED.
 
+- **Node 9 CI FIX (RED on ubuntu+macOS -> green)** — first CI run after node 9 failed:
+  L3.1/L3.14/L3.x "expected [1] got [0]" (ubuntu+macOS) and L3.11/L3.11b "got [0]" (ubuntu+macOS).
+  Two root causes + fixes (full detail in PITFALLS "install must write artifacts before best-effort
+  registration"):
+  1. `timer/dotfiles-timer.sh` baked the payload via `sed -i` -> BSD/macOS sed misparsed `-i` (next
+     token = backup suffix) so `@TIMER_JITTER@` was never substituted (L3.11/L3.11b). FIX: removed
+     `sed` — payload header is now an UNQUOTED heredoc (values baked at write time) + a QUOTED
+     heredoc body (runtime refs un-expanded). Artifacts are written BEFORE the best-effort
+     `systemctl` registration (already returned 0 on enable-failure).
+  2. GH ubuntu has no usable `systemd --user`: `enable` registers nothing yet the old probe
+     (`systemctl --user show-environment`) passed, so the live unit-count asserts ran and read 0.
+     FIX: `have_systemd()` now requires `systemctl --user list-unit-files` to succeed AND
+     `is-system-running` ∈ {running,degraded}; the live-manager asserts (L3.1/L3.14 unit count,
+     L3.x enable/disable/status/logs) take a NAMED SKIP otherwise. Removed the `XDG_RUNTIME_DIR`
+     step from `unit.yml` (it only made the weak probe lie). REAL (non-skipped) asserts on every
+     leg: L3.4/L3.11/L3.11b (artifact content incl. jitter/interval), L3.12 (unit PATH injection),
+     L3.13 (Win non-admin VBS+loop), L3.9 + L3.4-disabled (direct `dotfiles -tick` fan-out).
+     `dotfiles-timer.ps1` `Install-Admin`/`Install-User` registration/`Start-Process` now wrapped in
+     try/catch so a non-interactive runner can't abort the file-install.
+  - Local re-verify (Windows, both probes SKIP live bits as on CI): bash 199/0/6 (timer 9/0/3),
+    pwsh 196/0/4 (timer 9/0/1), 0 FAIL. Committed (NOT pushed); orchestrator re-verifies CI.
+
 ## CI status
-- Node 9 NOT YET pushed/CI-verified (orchestrator pushes + verifies). Prior:
+- Node 9 CI FIX committed locally (artifacts-before-registration + strong systemd probe + no
+  XDG_RUNTIME_DIR); NOT YET pushed/CI-verified (orchestrator re-verifies). Prior:
+- Node 9 first CI run RED on ubuntu+macOS (sed -i + weak systemd probe) — now fixed. Prior:
 - Node 8 NOT YET pushed/CI-verified (orchestrator pushes + verifies). Prior:
 - Node 7 CI-VERIFIED GREEN: run 27791782158, ubuntu+macos+windows ALL success. Prior:
 - Node 6 CI-VERIFIED GREEN: run 27789885880, ubuntu+macos+windows ALL success (commit bd5b431). Prior:

@@ -246,6 +246,33 @@ Traps hit during implementation. Read before editing the dispatcher/harness.
   box). CI runners are ephemeral so it self-cleans there; on the dev host, kill leftovers with
   `Get-CimInstance Win32_Process | ? CommandLine -like '*dotfiles-tick-loop*' | Stop-Process`. The
   final `uninstall` in the test removes the Startup-folder VBS so nothing relaunches at next logon.
+- **`install` must write ALL on-disk artifacts BEFORE best-effort manager registration; GH runners
+  have NO usable `systemd --user`** (node 9 CI fix). Two distinct CI failures, two causes:
+  (1) **macOS L3.11/L3.11b "got [0]"** — the bash `install_timer` baked the payload's
+  `DOTFILES_*`/`JITTER` values via `sed -i -e ... -e ...`. BSD/macOS sed treats the token after `-i`
+  as a MANDATORY backup suffix, so the substitution silently never ran and the artifact still held
+  the literal `@TIMER_JITTER@` placeholder -> the `JITTER=15` content assert found nothing. SAME
+  class as the `sed -i` merge-test trap. FIX: drop `sed` entirely — split the payload into an
+  UNQUOTED heredoc header (`DOTFILES_COMMON='$DOTFILES_COMMON'`, `JITTER=$TIMER_JITTER` baked at
+  write time) appended by a QUOTED heredoc body (runtime `$RANDOM`/`$delay` un-expanded). No
+  post-hoc edit, no BSD/GNU divergence.
+  (2) **ubuntu+macOS L3.1/L3.14/L3.x "expected [1] got [0]"** — GH ubuntu runners have NO functional
+  `systemd --user` instance: `systemctl --user enable/start` returns 0 yet registers/finds ZERO
+  units, and `systemctl --user show-environment` can FALSELY succeed (especially once
+  `XDG_RUNTIME_DIR` is exported). The old probe `command -v systemctl && systemctl --user
+  show-environment` therefore passed on CI and the live-manager unit-count asserts then read 0 and
+  FAILED. FIX: (a) strengthen `have_systemd()` to require a manager that actually answers a unit
+  query — `systemctl --user list-unit-files` must succeed AND `systemctl --user is-system-running`
+  must be `running|degraded` — so the live asserts take a NAMED SKIP where no real manager exists;
+  (b) REMOVED the `XDG_RUNTIME_DIR` step from `unit.yml` (it only made the weak probe lie; the
+  strong probe just SKIPs on ubuntu). The artifact-content asserts (L3.4/L3.11/L3.11b/L3.12/L3.13)
+  and the direct `dotfiles -tick` fan-out asserts (L3.9/L3.4-disabled) stay REAL on all legs.
+  GENERAL RULE for any service-manager installer: write the payload + unit/plist/task files FIRST,
+  then make registration (`systemctl enable/start`, `Register-ScheduledTask`, `wscript` spawn)
+  BEST-EFFORT — on failure warn + return success-for-the-file-install, NEVER abort before the
+  artifacts exist and never hard-fail the whole install just because the live manager is absent
+  (the bash install already returned 0 on enable-failure; the pwsh `Install-Admin`/`Install-User`
+  now wrap registration/`Start-Process` in try/catch under `$ErrorActionPreference='Stop'`).
 - **zsh->bash re-exec must use the REAL script path (DOTFILES_SELF), not
   `$DOTFILES_COMMON/dotfiles.sh` — DOTFILES_COMMON is env-overridable for doctor engine
   inspection.** The macOS zsh leg re-execs heavy verbs under bash. The re-exec originally ran

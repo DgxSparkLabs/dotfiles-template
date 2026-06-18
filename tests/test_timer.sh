@@ -17,9 +17,22 @@ TIMER_SH="$REPO_UNDER_TEST/timer/dotfiles-timer.sh"
 # only fires when executed (BASH_SOURCE==$0); sourcing here just defines the functions.
 . "$DISPATCHER"
 
-# Is a real systemd user session available? (Linux GH VM yes; containers / Git-Bash / macOS no.)
+# Is a real, USABLE systemd user manager available?
+#
+# `systemctl --user show-environment` is NOT a sufficient probe: on GitHub ubuntu runners there is
+# no functional `systemd --user` instance, yet (depending on XDG_RUNTIME_DIR) that command — and
+# even `enable` — can return 0 while registering/finding ZERO units. So the live-manager asserts
+# below would then read a unit count of 0 and FAIL. We require a manager that actually answers a
+# unit-file query: `list-unit-files` must succeed AND the manager must report it is running. Where
+# this is false (CI ubuntu, Git-Bash, macOS) the live-manager-only asserts take a NAMED SKIP; the
+# artifact-content + direct `dotfiles -tick` asserts always run for real.
 have_systemd() {
-  command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1
+  command -v systemctl >/dev/null 2>&1 || return 1
+  systemctl --user list-unit-files >/dev/null 2>&1 || return 1
+  case "$(systemctl --user is-system-running 2>/dev/null)" in
+    running|degraded) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 # Run the timer script with the env pointing at the test's fake engine/root. The engine layout

@@ -72,18 +72,26 @@ install_timer() {
     mkdir -p "$DOTFILES_ROOT"
 
     # --- generated payload: call the dispatcher's fan-out tick ------------------------------
-    # Quoted heredoc: nothing here is expanded at install time. The @PLACEHOLDER@ tokens are
-    # substituted afterward so the values are baked (and inspectable) in the generated file.
-    cat > "$SCRIPT_FILE" <<'TICKSCRIPT'
+    # ON-DISK ARTIFACTS ARE WRITTEN FIRST, before any best-effort manager registration below, so
+    # the payload + unit files always exist (content asserts + the next tick depend on them) even
+    # when no live service manager is available on this host/runner.
+    #
+    # The dynamic header (paths + jitter) is built with an UNQUOTED heredoc so the values are baked
+    # directly — NO post-hoc `sed -i` (BSD/macOS sed treats `-i`'s next token as a backup suffix and
+    # would silently leave the @PLACEHOLDER@ tokens unsubstituted; see PITFALLS "sed -i is GNU-only").
+    # The body uses a QUOTED heredoc so the runtime `$RANDOM`/`$delay` refs are not expanded now.
+    cat > "$SCRIPT_FILE" <<EOF
 #!/bin/bash
 # dotfiles single-timer payload (node 9). Fans out the sync tick over ALL repos under
-# ~/.dotfiles/bare-repos/ via the dispatcher's `dotfiles -tick` (discovery is the registry).
+# ~/.dotfiles/bare-repos/ via the dispatcher's \`dotfiles -tick\` (discovery is the registry).
 # A per-fire random 0..JITTER sleep de-syncs N machines so they don't push in lockstep.
 set -u
-DOTFILES_COMMON='@DOTFILES_COMMON@'
-DOTFILES_ROOT='@DOTFILES_ROOT@'
+DOTFILES_COMMON='$DOTFILES_COMMON'
+DOTFILES_ROOT='$DOTFILES_ROOT'
 export DOTFILES_COMMON DOTFILES_ROOT
-JITTER=@TIMER_JITTER@
+JITTER=$TIMER_JITTER
+EOF
+    cat >> "$SCRIPT_FILE" <<'TICKSCRIPT'
 
 # Per-fire jitter: sleep a random number of whole seconds in [0, JITTER]. RANDOM is bash-native;
 # fall back to awk if absent. JITTER=0 disables it.
@@ -100,11 +108,6 @@ fi
 # every enabled repo, fail-isolated; one repo's error never aborts the others.
 exec bash "$DOTFILES_COMMON/dotfiles.sh" -tick
 TICKSCRIPT
-    sed -i \
-      -e "s|@DOTFILES_COMMON@|$DOTFILES_COMMON|g" \
-      -e "s|@DOTFILES_ROOT@|$DOTFILES_ROOT|g" \
-      -e "s|@TIMER_JITTER@|$TIMER_JITTER|g" \
-      "$SCRIPT_FILE"
     chmod +x "$SCRIPT_FILE"
 
     # Capture install-time shell PATH and prepend well-known user-local bin dirs so hook stubs

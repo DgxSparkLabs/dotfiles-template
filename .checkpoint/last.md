@@ -23,10 +23,22 @@ Branch: feat/sync-multi-repo-engine
     logs. Assert generated FILE CONTENT where the OS manager can't run; prove fire-calls-tick by
     calling `dotfiles -tick` DIRECTLY (2 enabled repos advance, 1 disabled does not). Live-manager
     bits are NAMED SKIPs.
-  - CI: FOLDED into `unit.yml` (auto-discovered) + added `XDG_RUNTIME_DIR` step so the ubuntu leg
-    runs the systemd live-manager assertions. `validate-timer.yml` -> manual-only SUPERSEDED no-op.
+  - CI: FOLDED into `unit.yml` (auto-discovered). `validate-timer.yml` -> manual-only SUPERSEDED.
 - Local results: `bash tests/run.sh bash` 199 PASS / 0 FAIL / 6 SKIP (timer 9/0/3);
   `pwsh tests/run.ps1` 196 PASS / 0 FAIL / 4 SKIP (timer 9/0/1). No existing suite regressed.
+
+## Node 9 CI FIX (this commit — first CI run was RED on ubuntu+macOS)
+- `timer/dotfiles-timer.sh`: removed `sed -i` payload substitution (BSD/macOS sed misparse left
+  `@TIMER_JITTER@` literal -> L3.11/L3.11b "got [0]"). Payload now baked via unquoted heredoc header
+  + quoted body. Artifacts written BEFORE best-effort `systemctl` registration.
+- `tests/test_timer.sh`: `have_systemd()` strengthened (requires `list-unit-files` ok AND
+  `is-system-running` ∈ running/degraded) — GH ubuntu's fake `systemd --user` no longer fools it,
+  so L3.1/L3.14/L3.x live-manager asserts NAMED-SKIP instead of failing.
+- `.github/workflows/unit.yml`: removed the `XDG_RUNTIME_DIR` step (it only made the weak probe lie).
+- `timer/dotfiles-timer.ps1`: `Install-Admin`/`Install-User` wrap registration + `Start-Process` in
+  try/catch (artifacts already written) so a non-interactive runner can't abort the file-install.
+- REAL asserts on all legs: L3.4/L3.11/L3.11b (artifact content), L3.12 (unit PATH), L3.13 (Win VBS+
+  loop), L3.9/L3.4-disabled (direct `dotfiles -tick`). Re-verified local 199/0/6 + 196/0/4, 0 FAIL.
 
 ## Next node (UNBLOCKED)
 - **Node 10** — migration + bootstrap.{sh,ps1}. Relocate the legacy single `~/.dotfiles` bare repo

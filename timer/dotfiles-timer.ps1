@@ -168,6 +168,9 @@ function Stop-LoopProcesses {
 
 function Install-Admin {
     $s = Get-TimerSettings
+    # ON-DISK ARTIFACT FIRST: write the payload before best-effort manager registration so the
+    # generated file always exists (content asserts + the next tick depend on it) even if Task
+    # Scheduler registration is unavailable (non-interactive / non-admin runner).
     Write-TickScript -Jitter $s.Jitter
 
     $action        = New-ScheduledTaskAction -Execute 'pwsh' `
@@ -180,22 +183,34 @@ function Install-Admin {
                          -ExecutionTimeLimit ([TimeSpan]::FromMinutes(5)) `
                          -StartWhenAvailable
 
-    Register-ScheduledTask -TaskName $TaskName `
-        -Action $action -Trigger @($triggerLogon, $triggerRepeat) -Settings $settings `
-        -RunLevel Limited -Force | Out-Null
-
-    Write-Host "[admin] Installed Task Scheduler task '$TaskName' (every $($s.Interval)s +-$($s.Jitter)s; payload: dotfiles -tick over all repos)."
+    # Best-effort: a non-interactive/unprivileged session may not be able to register a task. The
+    # payload is already on disk, so warn and return success-for-the-file-install rather than abort.
+    try {
+        Register-ScheduledTask -TaskName $TaskName `
+            -Action $action -Trigger @($triggerLogon, $triggerRepeat) -Settings $settings `
+            -RunLevel Limited -Force -ErrorAction Stop | Out-Null
+        Write-Host "[admin] Installed Task Scheduler task '$TaskName' (every $($s.Interval)s +-$($s.Jitter)s; payload: dotfiles -tick over all repos)."
+    } catch {
+        Write-Host "[admin] Note: could not register Task Scheduler task '$TaskName' ($($_.Exception.Message)). Payload written: $ScriptPath"
+    }
 }
 
 function Install-User {
     $s = Get-TimerSettings
+    # ON-DISK ARTIFACTS FIRST (payload + loop + VBS launcher), THEN best-effort process start.
     Write-TickScript -Jitter $s.Jitter
     Write-LoopScript -Interval $s.Interval
     Write-VbsLauncher
 
-    # Stop any old loops, then start one immediately so the user doesn't have to log out/in.
-    Stop-LoopProcesses
-    Start-Process wscript.exe -ArgumentList "`"$LauncherPath`"" -WindowStyle Hidden
+    # Best-effort: stop any old loops, then start one immediately so the user doesn't have to log
+    # out/in. A headless runner may not be able to spawn wscript — that must not abort the install
+    # (the files are already written), so swallow the failure with a warning.
+    try {
+        Stop-LoopProcesses
+        Start-Process wscript.exe -ArgumentList "`"$LauncherPath`"" -WindowStyle Hidden -ErrorAction Stop
+    } catch {
+        Write-Host "[user] Note: could not start the loop now ($($_.Exception.Message)); it will start on next logon. Files written."
+    }
 
     Write-Host "[user] Installed startup launcher: $LauncherPath"
     Write-Host "       Tick payload: $ScriptPath"
