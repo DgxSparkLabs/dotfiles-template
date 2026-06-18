@@ -2,7 +2,11 @@
 
 Branch: feat/sync-multi-repo-engine
 
-## Last node DONE (local green; NOT yet CI-verified — orchestrator pushes + verifies)
+## Last node DONE (CI-VERIFIED GREEN: run 27787968200, ubuntu+macos+windows ALL success)
+- Node-5 commit chain: 7a4dbb2 impl -> bc1ba03 (work-tree: run work-tree verbs as `git -C "$HOME"`,
+  fixed Linux) -> b1beae2 (BSD `sed -i` in tests, fixed macOS bash) -> 867c268 (zsh emulate/while-read)
+  -> 18d323f (DECISIVE: heavy verbs tick/show/resolve/doctor RE-EXEC under bash when ambient shell
+  isn't bash; fixed macOS zsh). 5 CI iterations, 4 distinct cross-OS bugs (all in PITFALLS).
 - **Node 5** — never-block reconcile + surfaced resolution. `__df_reconcile` inserted BETWEEN the
   local commit and push in `__df_tick_one` (commit-before-merge preserved). With an upstream:
   derive branch from HEAD (detached -> skip), bounded push loop (3): reconcile (fetch origin
