@@ -2,7 +2,9 @@
 
 Branch: feat/sync-multi-repo-engine
 
-## Last node DONE LOCALLY (not yet pushed/CI-verified — orchestrator pushes + verifies)
+## Last node DONE (CI-VERIFIED GREEN: run 27792872701, ubuntu+macos+windows ALL success; commit 3fcda8c)
+- MILESTONE: the Windows leg passing VERIFIES the design's one INFERRED assumption — in-hook
+  `git rev-parse --absolute-git-dir` repo identity works under Git-for-Windows sh.exe (L1.10/L4.4).
 - **Node 8** — per-repo hook dispatch via runner repo-identity. Extended the Python runner
   (`githooks-runner/dotfiles_githooks/`):
   - NEW `dispatch.py`:
