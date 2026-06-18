@@ -2,7 +2,9 @@
 
 Branch: feat/sync-multi-repo-engine
 
-## Last node DONE (local green; NOT yet pushed/CI-verified — orchestrator pushes + verifies)
+## Last node DONE (CI-VERIFIED GREEN: run 27791782158, ubuntu+macos+windows ALL success)
+- Node-7 commits: d79aacd impl -> 94fd214 (FIX: zsh->bash re-exec must use DOTFILES_SELF, the real
+  script path, NOT $DOTFILES_COMMON/dotfiles.sh which is env-overridable for doctor engine checks).
 - **Node 7** — `-doctor` in BOTH dispatchers (behavior-identical), replacing the exit-3 stub.
   Output per plan "F. Expected command outputs" / "G. Doctor — error cases":
   - `engine:` line — branch + (up to date | N commit(s) behind <upstream> | no upstream |
