@@ -113,6 +113,53 @@ function Pull-Machine($n, $repo, $branch = 'main') {
 }
 function MGd($n, $repo) { Join-Path (Join-Path (MRoot $n) 'bare-repos') $repo }
 
+# --- Node 6 robustness helpers ---------------------------------------------------------
+function Bare-Dir($name) { Join-Path (Join-Path $env:DOTFILES_ROOT 'bare-repos') $name }
+
+# Corrupt an existing bare repo (remove HEAD + objects) so git errors on it; the tick must SKIP
+# it (fail-isolation) and still tick the others.
+function Corrupt-Repo($name) {
+  $gd = Bare-Dir $name
+  Remove-Item -LiteralPath (Join-Path $gd 'objects') -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath (Join-Path $gd 'HEAD') -Force -ErrorAction SilentlyContinue
+}
+
+# Place a NORMAL (non-bare) git repo under bare-repos/. It IS a git repo (so __df_is_repo passes)
+# but has its own .git + work-tree; the tick must not treat it as a pure bare repo / corrupt $HOME.
+function Mk-NonbareUnderRepos($name) {
+  $dir = Bare-Dir $name
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  git -C "$dir" init -q
+  Set-Content -LiteralPath (Join-Path $dir 'file') -Value "inside`n" -NoNewline
+  git -C "$dir" add file
+  git -C "$dir" commit -q -m "nonbare seed"
+}
+
+# Simulate a crash mid-merge: leave a MERGE_HEAD (pointing at a real sha) so recovery must abort.
+function Plant-StaleMerge($name) {
+  $gd = Bare-Dir $name
+  $head = (git --git-dir="$gd" rev-parse HEAD 2>$null | Out-String).Trim()
+  Set-Content -LiteralPath (Join-Path $gd 'MERGE_HEAD') -Value "$head`n" -NoNewline
+  Set-Content -LiteralPath (Join-Path $gd 'MERGE_MSG')  -Value "crashed merge`n" -NoNewline
+}
+
+# Drop an index.lock and backdate its mtime so it is unambiguously stale.
+function Plant-StaleLock($name) {
+  $gd = Bare-Dir $name
+  $lock = Join-Path $gd 'index.lock'
+  Set-Content -LiteralPath $lock -Value '' -NoNewline
+  (Get-Item -LiteralPath $lock).LastWriteTime = (Get-Date).AddDays(-1)
+}
+
+# Create the tick-lock dir as if a LIVE tick holds it (fresh mtime) so a concurrent tick SKIPs.
+function Plant-LiveLock($name) {
+  $gd = Bare-Dir $name
+  $ld = Join-Path $gd 'dotfiles-tick.lock'
+  New-Item -ItemType Directory -Force -Path $ld | Out-Null
+  Set-Content -LiteralPath (Join-Path $ld 'pid') -Value '999999' -NoNewline
+}
+function Has-TickLock($name) { Test-Path -LiteralPath (Join-Path (Bare-Dir $name) 'dotfiles-tick.lock') }
+
 # Invoke the dispatcher in a CHILD pwsh (via _invoke.ps1, -File) so arg boundaries — including
 # ZERO args — and real stderr + exit code are captured reliably.
 # Sets $global:LastOut, $global:LastErr, $global:LastRc.

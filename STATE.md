@@ -56,20 +56,40 @@ Branch: `feat/sync-multi-repo-engine`. Build order = the plan's "Build order —
   machine with init --bare + remote add + fetch + checkout -B like machine 1. L2.10 forces
   push-exhaust deterministically with a `pre-push` hook that exits 1 (no timing race).
 
+- **Node 6 (robustness invariants)** — added to BOTH dispatchers, behavior-identical:
+  (1) **stale-state recovery** `__df_recover_stale` runs per repo BEFORE staging: a leftover
+  `MERGE_HEAD` (crash mid-merge) -> `merge --abort` (fall back to `reset --hard HEAD`, then rm of
+  MERGE_* files) so the work-tree is clean; a stale `index.lock` OLDER than a threshold
+  (`DOTFILES_LOCK_STALE`, default 60s) -> removed; a FRESH lock is LEFT (may be live).
+  (2) **concurrent-tick lock** `__df_lock_acquire`/`__df_lock_release` — atomic `mkdir`
+  (`New-Item -Directory`) of `<real-git-dir>/dotfiles-tick.lock`; a live tick's lock makes a second
+  tick SKIP this cycle + log "already running" (never blocks); a stale lock (> threshold) is
+  reclaimed. `__df_tick_one` now wraps the real work (`__df_tick_one_body`) so the lock is ALWAYS
+  released on every exit path (bash: capture rc + release; pwsh: try/finally). `__df_gitdir_real`
+  resolves the metadata dir (pure bare = the dir; non-bare = `<dir>/.git`) via
+  `rev-parse --absolute-git-dir`. Fail-isolation (L5.7/L5.14), detached HEAD (L5.19), no-upstream
+  (L5.21), unrelated-histories REFUSE (L5.22) were already correct from nodes 4/5 — Node 6 adds the
+  explicit BAD-path tests + asserts work-tree-untouched. New `tests/test_robust.{sh,ps1}` (L5.1,
+  L5.3, L5.7, L5.14, L5.15, L5.16, L5.17, L5.19, L5.21, L5.22, L5.23, L5.27). Harness gained
+  `corrupt_repo`/`Corrupt-Repo`, `mk_nonbare_under_repos`/`Mk-NonbareUnderRepos`, `plant_stale_merge`,
+  `plant_stale_lock`, `plant_live_lock`, `has_tick_lock` (+ PS equivs), `bare_dir`/`Bare-Dir`.
+  Local: bash full 131/131 +1 SKIP, pwsh full 128/128 +1 SKIP, 0 FAIL. The single SKIP is
+  `L5.17-autotick` (named reason: git-config forbids spaces in section names, so a spaced repo name
+  can't key `<repo>.tick` — schema constraint, not a Node 6 bug; the routing/discovery/passthrough
+  half of L5.17 fully passes).
+
 ## CI status
-- Node 5 NOT YET pushed/CI-verified (orchestrator pushes + verifies). Prior:
+- Node 6 NOT YET pushed/CI-verified (orchestrator pushes + verifies). Prior:
+- Node 5 CI-verified GREEN (run 27787968200, ubuntu+macos+windows). Prior:
 - Branch pushed; `unit` workflow GREEN on ubuntu + macos + windows (run 27781322623).
   bash (linux/mac/win-gitbash), zsh (macos), pwsh (all) all pass. The CI loop is proven.
 - (Benign annotation: actions/checkout@v4 Node20 deprecation — bump to @v5 sometime.)
 
 ## Next
-- **Node 6** robustness invariants: pre-step-1 stale-state recovery (abort leftover merge, clear
-  aged `index.lock` with pid guard), discovery validates each bare-repos/* is a real git-dir,
-  malformed-config / unrelated-histories safe REFUSE (node 5 already REFUSEs unrelated histories
-  in reconcile; node 6 adds the full L5 battery + index.lock/MERGE_HEAD recovery + concurrent-tick
-  lock). Gate: L5.* robustness cases.
-- Then nodes 7 (doctor) → 8 (hooks) → 9 (timer) → 10 (migration/bootstrap) → 11 (interop)
-  → 12 (README).
+- **Node 7** `-doctor`: ls-files intersection across repos (overlap=error), no-upstream / detached
+  / hooksPath-unset / tick-off / engine-behind checks, each printing a fix (plan "G. Doctor").
+  L0.13-L0.19; L5.6/L5.24/L5.25/L5.26 doctor-detection cases. `-doctor` is still the exit-3 stub.
+- Then nodes 8 (hooks) → 9 (timer) → 10 (migration/bootstrap) → 11 (interop) → 12 (README).
 
 ## How to run tests
 - bash: `bash tests/run.sh bash`  (zsh: `zsh tests/run.sh zsh`)

@@ -284,14 +284,109 @@ __DF_CONFLICTED__
   return 0
 }
 
+# --- Node 6: robustness — stale-state recovery + concurrent-tick lock. ----------------
+# Contract for every behavior here: fail-isolated (one bad repo never aborts the loop over
+# the others), fail-loud (clear message or safe default), never-corrupt (work-tree untouched),
+# never-block.
+
+# Resolve a bare repo's REAL git-dir (a "pure" bare repo IS the git-dir; a non-bare repo placed
+# under bare-repos/ has its git-dir at <dir>/.git). Echo the path git itself uses for metadata.
+__df_gitdir_real() {
+  local gd="$1" real
+  real="$(git --git-dir="$gd" rev-parse --absolute-git-dir 2>/dev/null)" || return 1
+  printf '%s' "$real"
+}
+
+# Age (in seconds) of a file, or a very large number if it can't be determined (treat unknown
+# as "old enough to clear" only where the caller decides; here we just report). Portable across
+# GNU/BSD stat; falls back to find -mmin if stat lacks the flags.
+__df_file_age() {
+  local f="$1" now mtime
+  [ -e "$f" ] || { printf '%s' "-1"; return 1; }
+  now="$(date +%s 2>/dev/null || printf '0')"
+  mtime="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)"
+  if [ -n "$mtime" ] && [ "$mtime" -ge 0 ] 2>/dev/null; then
+    printf '%s' "$((now - mtime))"
+  else
+    printf '%s' "999999"   # unknown mtime -> treat as old
+  fi
+}
+
+# Recover stale state left by a crashed prior tick, BEFORE acting on the repo. Guarded + safe:
+#   * a leftover MERGE_HEAD (crash mid-merge) -> `merge --abort` (work-tree restored), or a hard
+#     reset to HEAD as a fallback, so the tree is clean before we stage/commit.
+#   * a stale index.lock OLDER than a threshold (default 60s) -> remove it (a crashed tick never
+#     cleaned up). A FRESH lock (younger than the threshold) is left alone: it may belong to a
+#     live git process; the caller's tick-lock then makes us skip this cycle instead.
+# Never deletes a fresh lock. Returns 0 always (recovery is best-effort, never fatal).
+__df_recover_stale() {
+  local repo="$1" gd="$2" rgd lock age thresh="${DOTFILES_LOCK_STALE:-60}"
+  rgd="$(__df_gitdir_real "$gd")" || return 0
+  # 1. leftover merge from a crashed tick -> abort it (restores work-tree), fall back to reset.
+  if [ -f "$rgd/MERGE_HEAD" ]; then
+    __df_debug "recover: $repo stale MERGE_HEAD -> merge --abort"
+    git -C "$HOME" --git-dir="$gd" --work-tree="$HOME" merge --abort >/dev/null 2>&1 \
+      || git -C "$HOME" --git-dir="$gd" --work-tree="$HOME" reset --hard -q HEAD >/dev/null 2>&1 \
+      || rm -f "$rgd/MERGE_HEAD" "$rgd/MERGE_MSG" "$rgd/MERGE_MODE" 2>/dev/null
+  fi
+  # 2. stale index.lock older than the threshold -> remove (crashed tick never cleaned up).
+  lock="$rgd/index.lock"
+  if [ -f "$lock" ]; then
+    age="$(__df_file_age "$lock")"
+    if [ "$age" -ge "$thresh" ] 2>/dev/null; then
+      __df_debug "recover: $repo stale index.lock (age ${age}s >= ${thresh}s) -> remove"
+      rm -f "$lock" 2>/dev/null
+    else
+      __df_debug "recover: $repo fresh index.lock (age ${age}s) -> leave (may be live)"
+    fi
+  fi
+  return 0
+}
+
+# Concurrent-tick lock: serialize ticks on ONE repo so two overlapping -tick runs never corrupt
+# the index. Portable mutual exclusion via `mkdir` (atomic create-or-fail on every OS/filesystem).
+# The lock dir lives under the repo's real git-dir. A STALE lock (older than the threshold, e.g.
+# from a crashed tick) is reclaimed. If a LIVE tick holds the lock, we DO NOT block — the caller
+# skips this repo this cycle and logs it (never-block). Echoes nothing; returns 0 = acquired,
+# 1 = held by a live tick (skip this cycle).
+__df_lock_acquire() {
+  local repo="$1" gd="$2" rgd lockdir age thresh="${DOTFILES_LOCK_STALE:-60}"
+  rgd="$(__df_gitdir_real "$gd")" || return 0   # can't resolve git-dir -> let the tick fail naturally
+  lockdir="$rgd/dotfiles-tick.lock"
+  if mkdir "$lockdir" 2>/dev/null; then
+    printf '%s' "$$" > "$lockdir/pid" 2>/dev/null
+    DF_LOCKDIR="$lockdir"
+    return 0
+  fi
+  # Already locked. Reclaim it if it is stale (older than the threshold); else skip (live tick).
+  age="$(__df_file_age "$lockdir")"
+  if [ "$age" -ge "$thresh" ] 2>/dev/null; then
+    __df_debug "lock: $repo reclaiming stale tick-lock (age ${age}s >= ${thresh}s)"
+    rm -rf "$lockdir" 2>/dev/null
+    if mkdir "$lockdir" 2>/dev/null; then
+      printf '%s' "$$" > "$lockdir/pid" 2>/dev/null
+      DF_LOCKDIR="$lockdir"
+      return 0
+    fi
+  fi
+  __df_debug "lock: $repo held by a live tick -> skip this cycle (never block)"
+  return 1
+}
+__df_lock_release() {
+  [ -n "${DF_LOCKDIR:-}" ] && rm -rf "$DF_LOCKDIR" 2>/dev/null
+  DF_LOCKDIR=""
+  return 0
+}
+
 # --- The generic tick (node 4): single-writer add -> commit -> push. ---
-# Tick ONE repo. Gated by <repo>.tick (default OFF). Staging is SCOPED to the repo's own
-# tracked territory (never `git add -A` across all of $HOME). Push only if an upstream exists.
+# Tick ONE repo. Gated by <repo>.tick (default OFF). Node 6 wraps the real work
+# (__df_tick_one_body) with: skip non-repos / tick-off; a concurrent-tick lock (skip this cycle
+# if a live tick holds it — never block); and stale-state recovery (abort a leftover merge, clear
+# an aged index.lock) BEFORE acting. The lock is ALWAYS released on every exit path of the body.
 # Fail-isolated by the caller's loop: a git error here returns nonzero but never aborts the loop.
 __df_tick_one() {
   local repo="$1"
   local gd="$DOTFILES_ROOT/bare-repos/$repo"
-  local addflag
   if ! __df_is_repo "$gd"; then
     __df_debug "tick: skip non-repo $repo"
     return 0
@@ -300,6 +395,24 @@ __df_tick_one() {
     __df_debug "tick: $repo tick is OFF -> skip"
     return 0
   fi
+  # Serialize on this repo (never block): a live tick holds the lock -> skip this cycle + log.
+  if ! __df_lock_acquire "$repo" "$gd"; then
+    printf 'dotfiles: %s: a tick is already running for this repo; skipping this cycle\n' "$repo" >&2
+    return 0
+  fi
+  # Recover stale state from a crashed prior tick BEFORE acting (abort leftover merge; clear aged lock).
+  __df_recover_stale "$repo" "$gd"
+  local rc
+  __df_tick_one_body "$repo" "$gd"; rc=$?
+  __df_lock_release
+  return "$rc"
+}
+
+# The real per-repo tick work. Caller (__df_tick_one) has already validated the repo, checked the
+# tick gate, acquired the lock, and recovered stale state. May return early; the caller releases.
+__df_tick_one_body() {
+  local repo="$1" gd="$2"
+  local addflag
   addflag="$(__df_setting_add "$repo")"      # -A (all) or -u (tracked)
 
   # --- stage (scoped) ---

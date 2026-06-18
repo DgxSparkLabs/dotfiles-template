@@ -222,14 +222,119 @@ function __df_reconcile($repo, $gd, $branch) {
   return $true
 }
 
+# --- Node 6: robustness — stale-state recovery + concurrent-tick lock. ----------------
+# Contract for every behavior here: fail-isolated, fail-loud, never-corrupt, never-block.
+
+# Resolve a bare repo's REAL git-dir (a pure bare repo IS the git-dir; a non-bare repo placed
+# under bare-repos/ has its git-dir at <dir>/.git). Returns $null if it can't be resolved.
+function __df_gitdir_real($gd) {
+  $real = (git --git-dir="$gd" rev-parse --absolute-git-dir 2>$null | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $real) { return $null }
+  return $real
+}
+
+# Age in seconds of a file/dir, or a large number if unknown (treated as "old enough").
+function __df_file_age($f) {
+  if (-not (Test-Path -LiteralPath $f)) { return -1 }
+  try {
+    $mt = (Get-Item -LiteralPath $f -Force).LastWriteTime
+    return [int]((Get-Date) - $mt).TotalSeconds
+  } catch { return 999999 }
+}
+
+# Recover stale state left by a crashed prior tick, BEFORE acting. Guarded + safe:
+#   * leftover MERGE_HEAD -> merge --abort (restores work-tree), fall back to reset/rm.
+#   * stale index.lock OLDER than the threshold (default 60s) -> remove. A FRESH lock is LEFT
+#     alone (may belong to a live git process); the tick-lock then skips this cycle instead.
+function __df_recover_stale($repo, $gd) {
+  $rgd = __df_gitdir_real $gd
+  if (-not $rgd) { return }
+  $thresh = if ($env:DOTFILES_LOCK_STALE) { [int]$env:DOTFILES_LOCK_STALE } else { 60 }
+  $W = $env:HOME
+  if (Test-Path -LiteralPath (Join-Path $rgd 'MERGE_HEAD')) {
+    __df_debug "recover: $repo stale MERGE_HEAD -> merge --abort"
+    git -C "$W" --git-dir="$gd" --work-tree="$W" merge --abort 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      git -C "$W" --git-dir="$gd" --work-tree="$W" reset --hard -q HEAD 2>$null | Out-Null
+      if ($LASTEXITCODE -ne 0) {
+        foreach ($f in 'MERGE_HEAD','MERGE_MSG','MERGE_MODE') {
+          Remove-Item -LiteralPath (Join-Path $rgd $f) -Force -ErrorAction SilentlyContinue
+        }
+      }
+    }
+  }
+  $lock = Join-Path $rgd 'index.lock'
+  if (Test-Path -LiteralPath $lock) {
+    $age = __df_file_age $lock
+    if ($age -ge $thresh) {
+      __df_debug "recover: $repo stale index.lock (age ${age}s >= ${thresh}s) -> remove"
+      Remove-Item -LiteralPath $lock -Force -ErrorAction SilentlyContinue
+    } else {
+      __df_debug "recover: $repo fresh index.lock (age ${age}s) -> leave (may be live)"
+    }
+  }
+}
+
+# Concurrent-tick lock: serialize ticks on ONE repo so two overlapping -tick runs never corrupt
+# the index. Portable mutual exclusion via an atomic directory create. A STALE lock (older than
+# the threshold) is reclaimed; a LIVE tick's lock makes us SKIP this cycle (never block).
+# Returns $true = acquired, $false = held by a live tick (skip). Sets $script:DfLockDir.
+function __df_lock_acquire($repo, $gd) {
+  $rgd = __df_gitdir_real $gd
+  if (-not $rgd) { return $true }   # can't resolve git-dir -> let the tick fail naturally
+  $lockdir = Join-Path $rgd 'dotfiles-tick.lock'
+  $thresh = if ($env:DOTFILES_LOCK_STALE) { [int]$env:DOTFILES_LOCK_STALE } else { 60 }
+  try {
+    New-Item -ItemType Directory -Path $lockdir -ErrorAction Stop | Out-Null
+    Set-Content -LiteralPath (Join-Path $lockdir 'pid') -Value "$PID" -ErrorAction SilentlyContinue
+    $script:DfLockDir = $lockdir
+    return $true
+  } catch {
+    $age = __df_file_age $lockdir
+    if ($age -ge $thresh) {
+      __df_debug "lock: $repo reclaiming stale tick-lock (age ${age}s >= ${thresh}s)"
+      Remove-Item -LiteralPath $lockdir -Recurse -Force -ErrorAction SilentlyContinue
+      try {
+        New-Item -ItemType Directory -Path $lockdir -ErrorAction Stop | Out-Null
+        Set-Content -LiteralPath (Join-Path $lockdir 'pid') -Value "$PID" -ErrorAction SilentlyContinue
+        $script:DfLockDir = $lockdir
+        return $true
+      } catch { }
+    }
+    __df_debug "lock: $repo held by a live tick -> skip this cycle (never block)"
+    return $false
+  }
+}
+function __df_lock_release {
+  if ($script:DfLockDir) { Remove-Item -LiteralPath $script:DfLockDir -Recurse -Force -ErrorAction SilentlyContinue }
+  $script:DfLockDir = $null
+}
+
 # --- The generic tick (node 4): single-writer add -> commit -> push. ---
-# Tick ONE repo. Gated by <repo>.tick (default OFF). Staging is SCOPED to the repo's own
-# tracked territory (never `git add -A` across all of $HOME). Push only if an upstream exists.
-# Returns $true on success, $false on a git error (caller's loop isolates the failure).
+# Tick ONE repo. Gated by <repo>.tick (default OFF). Node 6 wraps the real work
+# (__df_tick_one_body) with the concurrent-tick lock + stale-state recovery; the lock is ALWAYS
+# released on every exit path. Returns $true on success, $false on a git error (caller isolates).
 function __df_tick_one($repo) {
   $gd = Join-Path (__df_reposdir) $repo
   if (-not (__df_is_repo $gd)) { __df_debug "tick: skip non-repo $repo"; return $true }
   if ((__df_setting_tick $repo) -ne 'true') { __df_debug "tick: $repo tick is OFF -> skip"; return $true }
+  # Serialize on this repo (never block): a live tick holds the lock -> skip this cycle + log.
+  if (-not (__df_lock_acquire $repo $gd)) {
+    [Console]::Error.WriteLine("dotfiles: ${repo}: a tick is already running for this repo; skipping this cycle")
+    return $true
+  }
+  # Recover stale state from a crashed prior tick BEFORE acting.
+  __df_recover_stale $repo $gd
+  try {
+    return (__df_tick_one_body $repo $gd)
+  } finally {
+    __df_lock_release
+  }
+}
+
+# The real per-repo tick work. Caller validated the repo, checked the gate, acquired the lock,
+# and recovered stale state. Returns $true on success, $false on a git error.
+function __df_tick_one_body($repo, $gd) {
   $addflag = __df_setting_add $repo          # -A (all) or -u (tracked)
 
   # --- stage (scoped) ---

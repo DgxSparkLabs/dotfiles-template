@@ -2,35 +2,36 @@
 
 Branch: feat/sync-multi-repo-engine
 
-## Last node DONE (CI-VERIFIED GREEN: run 27787968200, ubuntu+macos+windows ALL success)
-- Node-5 commit chain: 7a4dbb2 impl -> bc1ba03 (work-tree: run work-tree verbs as `git -C "$HOME"`,
-  fixed Linux) -> b1beae2 (BSD `sed -i` in tests, fixed macOS bash) -> 867c268 (zsh emulate/while-read)
-  -> 18d323f (DECISIVE: heavy verbs tick/show/resolve/doctor RE-EXEC under bash when ambient shell
-  isn't bash; fixed macOS zsh). 5 CI iterations, 4 distinct cross-OS bugs (all in PITFALLS).
-- **Node 5** — never-block reconcile + surfaced resolution. `__df_reconcile` inserted BETWEEN the
-  local commit and push in `__df_tick_one` (commit-before-merge preserved). With an upstream:
-  derive branch from HEAD (detached -> skip), bounded push loop (3): reconcile (fetch origin
-  <branch>; if behind, `merge --no-commit --no-ff FETCH_HEAD`) then push; non-ff rejection ->
-  re-reconcile + retry; after ceiling LOG + skip (never fail tick, never block, work-tree intact).
-  Resolution: non-overlapping auto-merge; same-line clash -> newest committer-date wins (compare
-  `log -1 --format=%ct`; ties -> ours), loser pinned to LOCAL `refs/sync-losers/<enc>/<epoch>`
-  (path non-alnum->`_`) + appended to `state/<repo>/conflicts.log` (LOCAL, never pushed);
-  modify/delete -> edit-beats-delete (ls-files -u stage 2/3); unrelated histories -> REFUSE.
-  Implemented `-show` (per-repo conflicts.log, greppable) + `-resolve <path>` (newest loser ref
-  across repos -> `<path>.loser` via ls-tree/cat-file + winner/loser header). Both shells kept
-  semantically identical. Harness: `mk_machine`/`Mk-Machine` (+ tick/write/read/pull_machine).
-  Tests: tests/test_merge.{sh,ps1} (L2.2-L2.13). Local: bash 95/95 (merge 49), pwsh 92/92
-  (merge 49), 0 SKIP. Existing dispatcher/config/tick suites still green.
+## Last node DONE (local green; NOT yet CI-verified — orchestrator pushes + verifies)
+- **Node 6** — robustness invariants in BOTH dispatchers (behavior-identical):
+  - **Stale-state recovery** (`__df_recover_stale`, per repo, BEFORE staging): leftover MERGE_HEAD
+    -> `merge --abort` (fallback `reset --hard HEAD`, then rm MERGE_*); stale `index.lock` older
+    than `DOTFILES_LOCK_STALE` (default 60s) -> removed; a FRESH lock is LEFT (may be live).
+  - **Concurrent-tick lock** (`__df_lock_acquire`/`__df_lock_release`): atomic `mkdir` /
+    `New-Item -Directory` of `<real-git-dir>/dotfiles-tick.lock`. Live lock -> SKIP this cycle + log
+    "already running" (NEVER blocks). Stale lock (> threshold) -> reclaimed. `__df_tick_one` now
+    wraps `__df_tick_one_body` so the lock releases on EVERY exit path (bash: rc capture + release;
+    pwsh: try/finally). `__df_gitdir_real` resolves the metadata dir for pure-bare AND non-bare.
+  - Fail-isolation (loop continues past a corrupt/unreachable repo), detached-HEAD skip, no-upstream
+    local-commit-only, unrelated-histories REFUSE were already correct (nodes 4/5); node 6 adds the
+    explicit BAD-path tests + work-tree-untouched asserts.
+- Tests: `tests/test_robust.{sh,ps1}` — L5.1, L5.3, L5.7, L5.14, L5.15, L5.16, L5.17, L5.19, L5.21,
+  L5.22, L5.23, L5.27. (Already elsewhere: L5.8-L5.12 test_config, L5.13 test_dispatcher.)
+  Harness gained `corrupt_repo`/`Corrupt-Repo`, `mk_nonbare_under_repos`/`Mk-NonbareUnderRepos`,
+  `plant_stale_merge`/`Plant-StaleMerge`, `plant_stale_lock`/`Plant-StaleLock`,
+  `plant_live_lock`/`Plant-LiveLock`, `has_tick_lock`/`Has-TickLock`, `bare_dir`/`Bare-Dir`.
+- Local results: `bash tests/run.sh bash` -> 131 PASS / 0 FAIL / 1 SKIP; `pwsh tests/run.ps1` ->
+  128 PASS / 0 FAIL / 1 SKIP. The SKIP is `L5.17-autotick` — NAMED reason: git-config forbids
+  spaces in section names, so a spaced repo name can't key `<repo>.tick` (schema constraint, not a
+  node-6 bug); the routing/discovery/passthrough half of L5.17 fully passes.
 
 ## Next node (UNBLOCKED)
-- **Node 6** — robustness invariants. Pre-step-1 stale-state recovery (abort leftover merge; clear
-  aged index.lock with pid guard), discovery git-dir validation already partly present
-  (`__df_is_repo`); add the full L5 BAD-path battery (L5.1-L5.28): missing config/engine/bare-repos,
-  malformed config (already safe-refuses), corrupted/non-git/non-bare repos skipped fail-isolated,
-  detached/missing-branch/no-upstream handling, unrelated histories (node 5 already REFUSEs in
-  reconcile — add the explicit test + work-tree-untouched assert), index.lock/MERGE_HEAD recovery,
-  concurrent-tick lock, read-only paths.
+- **Node 7** — `-doctor` (still the exit-3 stub). ls-files intersection across repos
+  (overlap=error + `rm --cached` fix), no-upstream / detached / hooksPath-unset / tick-off /
+  engine-behind checks each printing a fix (plan "G. Doctor — error cases"). Gate L0.13-L0.19;
+  doctor-detection cases L5.6/L5.24/L5.25/L5.26.
 
 ## Do NOT
 - re-run a completed node; push to master; weaken tests; `git add -A` unscoped across $HOME;
-  push `refs/sync-losers/*` or `state/*/conflicts.log` to any synced branch (LOCAL only).
+  push `refs/sync-losers/*` or `state/*/conflicts.log` to any synced branch (LOCAL only);
+  hardcode `<dir>/MERGE_HEAD` — resolve the real git-dir (non-bare repos keep it in `<dir>/.git`).

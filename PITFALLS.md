@@ -117,6 +117,36 @@ Traps hit during implementation. Read before editing the dispatcher/harness.
   a pipe, preserving `$logf`/`$best_*` state). Glob `for d in "$base"/*/` loops were NOT affected
   (zsh globs by default). Production behavior on bash is identical. Verify on Windows with `bash
   tests/run.sh bash` + `pwsh -File tests/run.ps1`; CI re-verifies the zsh leg.
+- **git-config section names forbid spaces -> a spaced repo name can't key `<repo>.tick`** (node 6
+  L5.17). Routing/discovery/passthrough quoting holds fine for a repo dir named `my repo`
+  (`dotfiles "my repo" status`, `-ls`, `git add/commit` all work), but `git config -f cfg "my
+  repo.tick" on` fails with `error: invalid key: my repo.tick` — git restricts a top-level section
+  name to `[A-Za-z0-9-.]`. The per-repo settings schema (`<repo>.<key>`, nodes 3-5) makes the repo
+  name the section, so a spaced repo CANNOT be auto-tick-enabled under the current schema. The
+  subsection form `[dotfiles "my repo"] tick` (dotted `dotfiles.my repo.tick`) DOES accept spaces,
+  but adopting it is a config-schema change spanning nodes 3-5 — out of scope for node 6. Surfaced
+  as a NAMED skip `L5.17-autotick` (no silent drop). If a future node wants spaced-name auto-tick,
+  migrate the schema to the `dotfiles.<repo>.<key>` subsection form everywhere (readers + writers +
+  tests), don't special-case it.
+- **The tick lock/recovery must resolve the REAL git-dir, not assume the bare dir IS it** (node 6).
+  A "pure" bare repo's metadata IS `bare-repos/<name>/`, but a non-bare repo wrongly placed there
+  (L5.15) keeps its metadata in `bare-repos/<name>/.git`. `index.lock`, `MERGE_HEAD`, and the
+  `dotfiles-tick.lock` dir live in the REAL git-dir. `__df_gitdir_real` uses `git --git-dir=<dir>
+  rev-parse --absolute-git-dir` (git itself returns `<dir>/.git` for a non-bare repo) so recovery +
+  locking land in the right place for both. Don't hardcode `<dir>/MERGE_HEAD`.
+- **Lock release on EVERY exit path of the tick** (node 6). `__df_tick_one` has many early returns
+  (add failed, commit failed, push exhausted, detached HEAD...). Acquiring the lock inline and
+  releasing only at the end would leak the lock on any early return, wedging the repo for the stale
+  threshold. Fix: split the real work into `__df_tick_one_body`; the wrapper acquires, recovers,
+  calls the body, and releases unconditionally — bash captures rc then releases; pwsh uses
+  `try { return (body) } finally { release }`. (A leaked lock is only an inconvenience — the next
+  tick reclaims it after the threshold — but never-block wants it released promptly.)
+- **Backdate planted stale locks by a full day, not by the threshold** (node 6 tests). The stale
+  threshold is configurable (`DOTFILES_LOCK_STALE`, default 60s; tests set 1s for L5.23). To make a
+  planted `index.lock`/lock-dir unambiguously "stale" regardless of the threshold under test, set
+  its mtime to 1 day ago (`touch -d '1 day ago'` / BSD `touch -t`; pwsh `(...).LastWriteTime =
+  (Get-Date).AddDays(-1)`). For the LIVE-lock concurrency test (L5.27) do the OPPOSITE: leave the
+  lock fresh and keep the default 60s threshold so it reads as live and the second tick skips.
 - **macOS zsh leg — heavy git verbs re-exec under bash.** zsh word-splitting/array semantics made
   per-construct fixes unreliable (two attempts — `emulate -L sh`, while-read loops — did NOT clear
   the macOS zsh merge failures, and zsh can't be reproduced on the Windows host), so

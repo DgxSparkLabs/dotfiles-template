@@ -118,3 +118,56 @@ pull_machine() {
   git --git-dir="$gd" --work-tree="$(mhome "$n")" fetch -q origin "$branch"
   git --git-dir="$gd" --work-tree="$(mhome "$n")" reset -q --hard FETCH_HEAD
 }
+
+# --- Node 6 robustness helpers ---------------------------------------------------------
+# bare-repos/<name> path for the current env.
+bare_dir() { printf '%s/bare-repos/%s' "$DOTFILES_ROOT" "$1"; }
+
+# corrupt_repo <name> — make an existing bare repo unusable (remove HEAD + objects) so git
+# errors on it. The tick must SKIP it (fail-isolation), not abort the loop over the others.
+corrupt_repo() {
+  local gd; gd="$(bare_dir "$1")"
+  rm -rf "$gd/objects" "$gd/HEAD" 2>/dev/null
+}
+
+# mk_nonbare_under_repos <name> — place a NORMAL (non-bare) git repo under bare-repos/. It IS a
+# git repo (so __df_is_repo passes), but it has a .git subdir + a work-tree of its own; the tick
+# must not treat it as a pure bare repo and must not corrupt $HOME. Returns with a committed file.
+mk_nonbare_under_repos() {
+  local name="$1" dir; dir="$(bare_dir "$name")"
+  mkdir -p "$dir"
+  git -C "$dir" init -q
+  printf 'inside\n' > "$dir/file"
+  git -C "$dir" add file
+  git -C "$dir" commit -q -m "nonbare seed"
+}
+
+# plant_stale_merge <name> — simulate a crash mid-merge: leave a MERGE_HEAD pointing at a real
+# commit so recovery must `merge --abort`. We point MERGE_HEAD at HEAD (a valid sha) and write a
+# bogus MERGE_MSG; git treats the presence of MERGE_HEAD as "merge in progress".
+plant_stale_merge() {
+  local name="$1" gd head; gd="$(bare_dir "$name")"
+  head="$(git --git-dir="$gd" rev-parse HEAD 2>/dev/null)"
+  printf '%s\n' "$head" > "$gd/MERGE_HEAD"
+  printf 'crashed merge\n' > "$gd/MERGE_MSG"
+}
+
+# plant_stale_lock <name> [age_seconds] — drop an index.lock and backdate its mtime so it is
+# OLDER than the stale threshold (default test threshold is small via DOTFILES_LOCK_STALE).
+plant_stale_lock() {
+  local name="$1" gd; gd="$(bare_dir "$name")"
+  : > "$gd/index.lock"
+  # Backdate 1 day so it's unambiguously stale regardless of threshold.
+  touch -d '1 day ago' "$gd/index.lock" 2>/dev/null \
+    || touch -t "$(date -v-1d +%Y%m%d%H%M 2>/dev/null || printf '202001010000')" "$gd/index.lock" 2>/dev/null \
+    || true
+}
+
+# lock_held? <name> / plant_live_lock <name> — create the tick-lock dir as if a LIVE tick holds
+# it (fresh mtime), so a concurrent tick must SKIP. has_lock checks presence.
+plant_live_lock() {
+  local name="$1" gd; gd="$(bare_dir "$name")"
+  mkdir -p "$gd/dotfiles-tick.lock"
+  printf '999999\n' > "$gd/dotfiles-tick.lock/pid"
+}
+has_tick_lock() { [ -d "$(bare_dir "$1")/dotfiles-tick.lock" ]; }
