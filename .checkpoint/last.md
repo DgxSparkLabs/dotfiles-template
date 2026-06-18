@@ -2,8 +2,8 @@
 
 Branch: feat/sync-multi-repo-engine
 
-## Last node DONE (local green; CI not yet run for this node)
-- **Node 4** — generic tick, SINGLE-WRITER path. `__df_tick`/`__df_tick_one` in both
+## Last node DONE (CI-verified green: run 27782906786, ubuntu+macos+windows success)
+- **Node 4** — generic tick, SINGLE-WRITER path. Commit 142e3b9. `__df_tick`/`__df_tick_one` in both
   dispatchers (stub replaced). Gated by `__df_setting_tick` (default OFF). Stage scoped
   via `__df_setting_add`: `-u` tracked, or `-A` scoped to the repo's OWN tracked dirs
   (derived from `git ls-files` parent dirs) so it NEVER stages across $HOME / sibling repos.
