@@ -133,7 +133,47 @@ Branch: `feat/sync-multi-repo-engine`. Build order = the plan's "Build order —
   (old `.dotfiles/` paths) — node 8 covers hook dispatch via `unit.yml`; a dedicated rework of
   validate-githooks is left to a later node if desired.
 
+- **Node 9 (single timer fans out via `dotfiles -tick` + interval/jitter)** — swapped BOTH timer
+  backends' generated payload from the legacy baked single-repo `git add/commit/push` to a call to
+  the dispatcher's fan-out tick (loops `bare-repos/*`). Kept ALL backends + their singleton names
+  (`dotfiles-git-commit` systemd unit/timer; Windows admin Task Scheduler task; Windows non-admin
+  VBS-in-Startup + detached pwsh loop) and every subcommand (install/reinstall/enable/disable/
+  start/stop/status/logs/uninstall). Paths updated to the engine layout (timer at
+  `<root>/common/timer/`, dispatcher at `<root>/common/dotfiles.sh`; payload + units land under
+  `$DOTFILES_ROOT`). 
+  - **Payload**: `timer/dotfiles-timer.sh` generates `$DOTFILES_ROOT/.dotfiles-tick.sh` whose last
+    line is `exec bash "$DOTFILES_COMMON/dotfiles.sh" -tick`; `timer/dotfiles-timer.ps1` generates
+    `$DOTFILES_ROOT/.dotfiles-tick.ps1` ending `. <dispatcher>; dotfiles -tick`. The systemd unit
+    keeps the install-time PATH injection (`$HOME/.local/bin:$HOME/bin:$HOME/.cargo/bin:$PATH`) so
+    hook-driven `uv` resolves, and now also exports `DOTFILES_COMMON`/`DOTFILES_ROOT`.
+  - **Interval + jitter**: both timers read `[timer] interval` (default 60) and `[timer] jitter`
+    (default 15) by SOURCING the dispatcher and calling its readers — added `__df_setting_timer_jitter`
+    to both `dotfiles.sh`/`.ps1` (interval reader already existed). Interval drives the cadence
+    (`OnUnitActiveSec=${interval}s`; Task Scheduler `RepetitionInterval`; non-admin loop
+    `Start-Sleep`). Jitter is applied TWO ways for de-sync: systemd `RandomizedDelaySec=${jitter}s`,
+    AND a per-fire random `0..jitter` sleep baked into the payload (`RANDOM % (jitter+1)` in sh;
+    `Get-Random` in pwsh) so the jitter value is present + inspectable in the generated artifact.
+  - **Tests**: NEW `tests/test_timer.{sh,ps1}` (greppable GOOD/SKIP). Assert generated FILE CONTENT
+    (payload calls `-tick`; jitter baked; interval/jitter from config honored; systemd unit bakes
+    PATH incl. `~/.local/bin`; Windows non-admin VBS windowless + loop generated) and prove
+    fire-calls-tick by calling `dotfiles -tick` DIRECTLY over 2 enabled repos (both origins advance)
+    + a disabled repo (does NOT advance) = L3.9 one-timer-many-repos. install/reinstall idempotency
+    asserted via file-presence count (==1 unit pair / ==3 user-mode files) and, where the live
+    manager is reachable, the registered unit/task count. Live-manager-only transitions
+    (enable/disable/status/logs) are RESULT=SKIP with NAMED reasons ("systemd user session
+    unavailable on this runner" / "Task Scheduler needs an admin/interactive session"); the macOS
+    /non-Windows pwsh leg SKIPs the whole Windows backend with a named reason.
+  - **CI wiring**: FOLDED into `unit.yml` (run.{sh,ps1} auto-discover test_timer.*). Added an
+    `XDG_RUNTIME_DIR=/run/user/$(id -u)` step on the ubuntu leg so the Linux timer's live-manager
+    assertions (L3.1/L3.14 unit count, enable/disable) RUN instead of skipping. `validate-timer.yml`
+    rewritten to a manual-only no-op marked SUPERSEDED (it tested the removed baked single-repo
+    payload / `.auto-commit.sh` / `git add -u|-A`).
+  - Local: `bash tests/run.sh bash` 199/0/6 (timer 9/0/3); `pwsh tests/run.ps1` 196/0/4
+    (timer 9/0/1). The timer SKIPs are the live-manager bits (no systemd session under Git-Bash;
+    Task Scheduler needs admin) — all NAMED.
+
 ## CI status
+- Node 9 NOT YET pushed/CI-verified (orchestrator pushes + verifies). Prior:
 - Node 8 NOT YET pushed/CI-verified (orchestrator pushes + verifies). Prior:
 - Node 7 CI-VERIFIED GREEN: run 27791782158, ubuntu+macos+windows ALL success. Prior:
 - Node 6 CI-VERIFIED GREEN: run 27789885880, ubuntu+macos+windows ALL success (commit bd5b431). Prior:
@@ -143,10 +183,10 @@ Branch: `feat/sync-multi-repo-engine`. Build order = the plan's "Build order —
 - (Benign annotation: actions/checkout@v4 Node20 deprecation — bump to @v5 sometime.)
 
 ## Next
-- **Node 9** timer payload swap: the one installed OS unit/task/loop's payload becomes
-  `dotfiles -tick` (loops `bare-repos/*`); keep all backends + names; add jitter (±0-15s) and
-  the `[timer] interval/jitter` settings. Gate L3.*.
-- Then nodes 10 (migration/bootstrap) → 11 (interop) → 12 (README).
+- **Node 10** migration + bootstrap.{sh,ps1}: relocate the legacy single `~/.dotfiles` bare repo
+  into `bare-repos/machine/`, split the engine into `common/`, uninstall the old timer first, and
+  re-home the dispatcher/hooksPath. Gate L1.14, L5.25.
+- Then nodes 11 (interop) → 12 (README).
 
 ## How to run tests
 - bash: `bash tests/run.sh bash`  (zsh: `zsh tests/run.sh zsh`)

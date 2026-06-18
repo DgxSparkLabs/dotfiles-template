@@ -1,136 +1,120 @@
 #!/usr/bin/env bash
-# dotfiles-timer.sh: Manage a systemd user timer that auto-commits dotfiles changes.
+# dotfiles-timer.sh: Manage the SINGLE systemd user timer that runs the dotfiles sync tick.
+#
+# Node 9 — the one installed timer no longer bakes a single-repo add/commit/push payload.
+# Its payload now calls the dispatcher's fan-out: `dotfiles -tick` loops EVERY repo under
+# ~/.dotfiles/bare-repos/ (discovery is the registry — a new repo on disk is ticked next cycle).
+# Exactly one unit/timer is ever installed, regardless of how many repos exist.
+#
+# Cadence + de-sync:
+#   [timer] interval  (seconds, default 60)  -> OnUnitActiveSec
+#   [timer] jitter    (+- seconds, default 15) -> systemd RandomizedDelaySec AND a per-fire
+#                       randomized 0..jitter sleep baked into the payload script (so N machines
+#                       don't push in lockstep). The jitter value is embedded in the generated
+#                       artifact so it is testable without a live manager.
 
-GIT_DIR="$HOME/.dotfiles"
-WORK_TREE="$HOME"
-SERVICE_NAME="dotfiles-git-commit"
+# The engine lives at <root>/common/; this script is <root>/common/timer/dotfiles-timer.sh.
+TIMER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+DOTFILES_COMMON="${DOTFILES_COMMON:-$(cd "$TIMER_DIR/.." && pwd)}"
+DOTFILES_ROOT="${DOTFILES_ROOT:-$(cd "$DOTFILES_COMMON/.." && pwd)}"
+DISPATCHER="$DOTFILES_COMMON/dotfiles.sh"
+
+SERVICE_NAME="dotfiles-git-commit"        # singleton name kept from the legacy timer
 SERVICE_FILE="$HOME/.config/systemd/user/${SERVICE_NAME}.service"
 TIMER_FILE="$HOME/.config/systemd/user/${SERVICE_NAME}.timer"
-SCRIPT_FILE="$GIT_DIR/.auto-commit.sh"
+SCRIPT_FILE="$DOTFILES_ROOT/.dotfiles-tick.sh"   # generated payload (calls dotfiles -tick)
 TIMER_UNIT="${SERVICE_NAME}.timer"
 SERVICE_UNIT="${SERVICE_NAME}.service"
+
+# Read the [timer] settings via the dispatcher's own readers (single source of truth). Sourcing
+# the dispatcher defines __df_setting_timer_interval/jitter; fall back to defaults if unavailable.
+__timer_settings() {
+  TIMER_INTERVAL=60
+  TIMER_JITTER=15
+  if [ -f "$DISPATCHER" ]; then
+    # shellcheck source=/dev/null
+    . "$DISPATCHER" >/dev/null 2>&1 || true
+    if command -v __df_setting_timer_interval >/dev/null 2>&1; then
+      TIMER_INTERVAL="$(__df_setting_timer_interval 2>/dev/null)"
+    fi
+    if command -v __df_setting_timer_jitter >/dev/null 2>&1; then
+      TIMER_JITTER="$(__df_setting_timer_jitter 2>/dev/null)"
+    fi
+  fi
+  case "$TIMER_INTERVAL" in ''|*[!0-9]*) TIMER_INTERVAL=60 ;; esac
+  case "$TIMER_JITTER"   in ''|*[!0-9]*) TIMER_JITTER=15 ;; esac
+}
 
 print_usage() {
   cat <<EOF
 Usage: $0 [install|reinstall|enable|disable|start|stop|status|logs|uninstall|remove]
 
-  install [--all|-A]   Write unit files, enable autostart. Default auto-commit uses 'git add -u'.
-                       With --all or -A, embeds 'git add -A' (stages new files under the work tree).
-  reinstall [--all|-A] Uninstall + install (same flags as install).
+  install     Write unit files + the tick payload, enable autostart. The payload runs
+              \`dotfiles -tick\` over EVERY repo under ~/.dotfiles/bare-repos/.
+  reinstall   Uninstall + install (idempotent — always exactly one timer).
+  enable      Mark to autostart on next boot (don't necessarily run now).
+  disable     Turn off autostart and stop now (keep unit files).
+  start       Run now (idempotent — also enables if disabled).
+  stop        Stop running now (transient — auto-resumes on reboot if enabled).
+  status      Show timer and service status.
+  logs        Show recent service logs.
+  uninstall   Full removal (alias: remove).
 
-  enable     Mark to autostart on next boot (don't necessarily run now).
-  disable    Turn off autostart and stop now (keep unit files).
-  start      Run now (idempotent — also enables if disabled).
-  stop       Stop running now (transient — auto-resumes on reboot if enabled).
-  status     Show timer and service status.
-  logs       Show recent service logs.
-  uninstall  Full removal (alias: remove).
-
-Commits tracked dotfiles changes every minute using:
-  git --git-dir=$GIT_DIR --work-tree=$WORK_TREE
-
-Default auto-commit uses 'git add -u' (tracked changes only). Use install --all for 'git add -A'.
+One timer; its tick fans out over all repos via:
+  bash $DISPATCHER -tick
+Cadence from ~/.dotfiles/config: [timer] interval (default 60s), jitter (default +-15s).
 EOF
 }
 
 install_timer() {
+    __timer_settings
     mkdir -p "$HOME/.config/systemd/user"
+    mkdir -p "$DOTFILES_ROOT"
 
-    GIT_ADD_SPEC="-u"
-    if [ "${ADD_ALL_FLAG:-0}" -eq 1 ]; then
-      GIT_ADD_SPEC="-A"
-    fi
-
-    # Quoted heredoc: an unquoted EOF would run $((…)) and $(git …) while *installing*, corrupting the script.
-    cat > "$SCRIPT_FILE" <<'AUTOSCRIPT'
+    # --- generated payload: call the dispatcher's fan-out tick ------------------------------
+    # Quoted heredoc: nothing here is expanded at install time. The @PLACEHOLDER@ tokens are
+    # substituted afterward so the values are baked (and inspectable) in the generated file.
+    cat > "$SCRIPT_FILE" <<'TICKSCRIPT'
 #!/bin/bash
-# Subject: chore(dotfiles): add/mod/del/ren with paths; body: grouped lists (names, not only counts).
-GDIR='@DOTFILES_GIT_DIR@'
-WTREE='@DOTFILES_WORK_TREE@'
-git --git-dir="$GDIR" --work-tree="$WTREE" add @GIT_ADD_SPEC@
-if ! git --git-dir="$GDIR" --work-tree="$WTREE" diff --quiet --cached; then
-  ts=$(date --iso-8601=seconds 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
+# dotfiles single-timer payload (node 9). Fans out the sync tick over ALL repos under
+# ~/.dotfiles/bare-repos/ via the dispatcher's `dotfiles -tick` (discovery is the registry).
+# A per-fire random 0..JITTER sleep de-syncs N machines so they don't push in lockstep.
+set -u
+DOTFILES_COMMON='@DOTFILES_COMMON@'
+DOTFILES_ROOT='@DOTFILES_ROOT@'
+export DOTFILES_COMMON DOTFILES_ROOT
+JITTER=@TIMER_JITTER@
 
-  paths_added=$(git --git-dir="$GDIR" --work-tree="$WTREE" diff --cached --diff-filter=A --name-only)
-  paths_modified=$(git --git-dir="$GDIR" --work-tree="$WTREE" diff --cached --diff-filter=M --name-only)
-  paths_deleted=$(git --git-dir="$GDIR" --work-tree="$WTREE" diff --cached --diff-filter=D --name-only)
-
-  sbj_parts=()
-  while IFS= read -r f; do [ -z "$f" ] || sbj_parts+=("add ${f}"); done <<< "$paths_added"
-  while IFS= read -r f; do [ -z "$f" ] || sbj_parts+=("mod ${f}"); done <<< "$paths_modified"
-  while IFS= read -r f; do [ -z "$f" ] || sbj_parts+=("del ${f}"); done <<< "$paths_deleted"
-  while IFS=$'\t' read -r _st oldp newp; do
-    [ -n "$oldp" ] && [ -n "$newp" ] || continue
-    sbj_parts+=("ren ${oldp} -> ${newp}")
-  done < <(git --git-dir="$GDIR" --work-tree="$WTREE" diff --cached --name-status --diff-filter=R)
-
-  detail=""
-  if [ ${#sbj_parts[@]} -gt 0 ]; then
-    detail=$(printf '%s; ' "${sbj_parts[@]}")
-    detail=${detail%; }
+# Per-fire jitter: sleep a random number of whole seconds in [0, JITTER]. RANDOM is bash-native;
+# fall back to awk if absent. JITTER=0 disables it.
+if [ "$JITTER" -gt 0 ] 2>/dev/null; then
+  if [ -n "${RANDOM:-}" ]; then
+    delay=$(( RANDOM % (JITTER + 1) ))
   else
-    detail="changes"
+    delay=$(awk -v m="$JITTER" 'BEGIN{srand();print int(rand()*(m+1))}')
   fi
-  subject_core="chore(dotfiles): ${detail}"
-  max_len=160
-  if [ ${#subject_core} -gt $max_len ]; then
-    name_lines=$(git --git-dir="$GDIR" --work-tree="$WTREE" diff --cached --name-only)
-    ntotal=$(printf '%s\n' "$name_lines" | sed '/^$/d' | wc -l | tr -d ' ')
-    preview=$(printf '%s\n' "$name_lines" | sed '/^$/d' | head -n 3 | paste -sd ', ' -)
-    subject_core="chore(dotfiles): ${ntotal} paths (${preview}, …)"
-    if [ ${#subject_core} -gt $max_len ]; then
-      subject_core="chore(dotfiles): ${ntotal} paths (see message body)"
-    fi
-  fi
-  subject="${subject_core} at ${ts}"
-
-  body=""
-  append_section() {
-    local title="$1"
-    local lines="$2"
-    local nonempty
-    nonempty=$(printf '%s\n' "$lines" | sed '/^$/d')
-    [ -z "$nonempty" ] && return 0
-    body+="${title}"$'\n'
-    body+=$(printf '%s\n' "$nonempty" | sed 's/^/  /')$'\n'$'\n'
-  }
-  append_section "Added:" "$paths_added"
-  append_section "Modified:" "$paths_modified"
-  append_section "Deleted:" "$paths_deleted"
-  ren_body=""
-  while IFS=$'\t' read -r _st oldp newp; do
-    [ -n "$oldp" ] && [ -n "$newp" ] || continue
-    ren_body+="  ${oldp} -> ${newp}"$'\n'
-  done < <(git --git-dir="$GDIR" --work-tree="$WTREE" diff --cached --name-status --diff-filter=R)
-  if [ -n "$ren_body" ]; then
-    body+="Renamed:"$'\n'
-    body+="$ren_body"$'\n'
-  fi
-
-  if [ -n "$(printf '%s' "$body" | sed '/^$/d')" ]; then
-    msg=$(printf '%s\n\n%s' "$subject" "$body")
-    git --git-dir="$GDIR" --work-tree="$WTREE" commit -m "$msg"
-  else
-    git --git-dir="$GDIR" --work-tree="$WTREE" commit -m "$subject"
-  fi
+  [ "$delay" -gt 0 ] 2>/dev/null && sleep "$delay"
 fi
-git --git-dir="$GDIR" --work-tree="$WTREE" push || {
-  echo "auto-commit: push failed (check SSH agent / network)" >&2
-  exit 1
-}
-AUTOSCRIPT
-    sed -i "s|@DOTFILES_GIT_DIR@|$GIT_DIR|g;s|@DOTFILES_WORK_TREE@|$WORK_TREE|g;s|@GIT_ADD_SPEC@|$GIT_ADD_SPEC|g" "$SCRIPT_FILE"
+
+# Run the fan-out tick under bash (heavy verbs re-exec under bash anyway). The dispatcher loops
+# every enabled repo, fail-isolated; one repo's error never aborts the others.
+exec bash "$DOTFILES_COMMON/dotfiles.sh" -tick
+TICKSCRIPT
+    sed -i \
+      -e "s|@DOTFILES_COMMON@|$DOTFILES_COMMON|g" \
+      -e "s|@DOTFILES_ROOT@|$DOTFILES_ROOT|g" \
+      -e "s|@TIMER_JITTER@|$TIMER_JITTER|g" \
+      "$SCRIPT_FILE"
     chmod +x "$SCRIPT_FILE"
 
-    # Capture install-time shell PATH and prepend well-known user-local bin dirs
-    # so hook stubs (e.g. uv-driven pre-push) work under systemd's sanitized PATH.
-    # Common uv install locations: $HOME/.local/bin (official installer),
-    # $HOME/.cargo/bin (cargo install), $HOME/bin (manual).
+    # Capture install-time shell PATH and prepend well-known user-local bin dirs so hook stubs
+    # (e.g. uv-driven pre-commit) resolve under systemd's sanitized PATH. Common uv install
+    # locations: $HOME/.local/bin (official installer), $HOME/.cargo/bin (cargo), $HOME/bin.
     TIMER_PATH="$HOME/.local/bin:$HOME/bin:$HOME/.cargo/bin:$PATH"
 
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=Auto-commit tracked dotfiles changes
+Description=dotfiles sync tick (fans out over all bare-repos via dotfiles -tick)
 After=network-online.target
 Wants=network-online.target
 
@@ -138,16 +122,19 @@ Wants=network-online.target
 Type=oneshot
 Environment=SSH_AUTH_SOCK=%t/keyring/ssh
 Environment="PATH=$TIMER_PATH"
+Environment="DOTFILES_COMMON=$DOTFILES_COMMON"
+Environment="DOTFILES_ROOT=$DOTFILES_ROOT"
 ExecStart=$SCRIPT_FILE
 EOF
 
     cat > "$TIMER_FILE" <<EOF
 [Unit]
-Description=Timer for dotfiles auto-commit
+Description=Timer for dotfiles sync tick
 
 [Timer]
 OnBootSec=10s
-OnUnitActiveSec=1min
+OnUnitActiveSec=${TIMER_INTERVAL}s
+RandomizedDelaySec=${TIMER_JITTER}s
 Persistent=true
 AccuracySec=1s
 
@@ -155,19 +142,18 @@ AccuracySec=1s
 WantedBy=timers.target
 EOF
 
-    systemctl --user daemon-reload
+    systemctl --user daemon-reload 2>/dev/null || true
     systemctl --user disable --now "$TIMER_UNIT" "$SERVICE_UNIT" >/dev/null 2>&1 || true
 
-    if ! systemctl --user enable "$TIMER_UNIT"; then
-        echo "Error: failed to enable $TIMER_UNIT. Check: journalctl --user -xe"
-        exit 1
+    if ! systemctl --user enable "$TIMER_UNIT" 2>/dev/null; then
+        echo "Note: could not enable $TIMER_UNIT (no systemd user session?). Unit files written."
+        echo "Installed unit files; tick payload: $SCRIPT_FILE (interval ${TIMER_INTERVAL}s, jitter ${TIMER_JITTER}s)"
+        return 0
     fi
-    if ! systemctl --user start "$TIMER_UNIT"; then
-        echo "Error: failed to start $TIMER_UNIT. Check: journalctl --user -xe"
-        exit 1
-    fi
+    systemctl --user start "$TIMER_UNIT" 2>/dev/null || \
+        echo "Note: could not start $TIMER_UNIT now (will run per its triggers)."
 
-    echo "Installed $TIMER_UNIT (commits every minute, git-dir: $GIT_DIR, auto-commit: git add $GIT_ADD_SPEC)"
+    echo "Installed $TIMER_UNIT (every ${TIMER_INTERVAL}s +-${TIMER_JITTER}s; payload: dotfiles -tick over all repos)"
 }
 
 disable_timer() {
@@ -179,18 +165,11 @@ disable_timer() {
 remove_timer() {
     disable_timer
     rm -f "$SERVICE_FILE" "$TIMER_FILE" "$SCRIPT_FILE"
-    systemctl --user daemon-reload
+    systemctl --user daemon-reload 2>/dev/null || true
     echo "Removed $TIMER_UNIT unit files."
 }
 
 ACTION="${1:-}"
-ADD_ALL_FLAG=0
-# Scan all args so reinstall/install still pick up --all|-A if $2 is not exactly that (CI wrappers, etc.).
-for _df_arg in "$@"; do
-  case "$_df_arg" in
-    --all|-A) ADD_ALL_FLAG=1 ;;
-  esac
-done
 
 case "$ACTION" in
     install)          install_timer ;;

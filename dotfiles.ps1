@@ -103,6 +103,17 @@ function __df_setting_timer_interval {
   return $def
 }
 
+# [timer] jitter: max +- seconds of random delay before each tick so N machines do not push in
+# lockstep. Non-negative integer, default 15. Non-numeric -> default + warning.
+function __df_setting_timer_jitter {
+  $def = 15
+  $raw = __df_raw 'timer.jitter'
+  if ($null -eq $raw) { return $def }
+  if ($raw -match '^[0-9]+$') { return [int]$raw }
+  [Console]::Error.WriteLine("dotfiles: invalid timer.jitter=$raw; using default $def")
+  return $def
+}
+
 # Generic reader retained for forward-compat callers. Usage: __df_setting <repo> <key> <default>
 function __df_setting($repo, $key, $def) {
   $raw = __df_raw "$repo.$key"

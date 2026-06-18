@@ -130,6 +130,19 @@ __df_setting_timer_interval() {
   esac
 }
 
+# [timer] jitter: max +- seconds of random delay applied before each tick so N machines do not
+# push in lockstep. Non-negative integer, default 15. Non-numeric -> default + warning.
+__df_setting_timer_jitter() {
+  local raw rc def=15
+  raw="$(__df_raw 'timer.jitter')"; rc=$?
+  [ "$rc" -ne 0 ] && { printf '%s' "$def"; return 0; }
+  case "$raw" in
+    ''|*[!0-9]*) printf 'dotfiles: invalid timer.jitter=%s; using default %s\n' "$raw" "$def" >&2
+                 printf '%s' "$def" ;;
+    *)           printf '%s' "$raw" ;;
+  esac
+}
+
 # Generic reader retained for forward-compat callers. Usage: __df_setting <repo> <key> <default>
 __df_setting() {
   local repo="$1" key="$2" def="$3" raw rc

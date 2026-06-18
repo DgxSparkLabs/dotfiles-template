@@ -2,50 +2,43 @@
 
 Branch: feat/sync-multi-repo-engine
 
-## Last node DONE (CI-VERIFIED GREEN: run 27792872701, ubuntu+macos+windows ALL success; commit 3fcda8c)
-- MILESTONE: the Windows leg passing VERIFIES the design's one INFERRED assumption — in-hook
-  `git rev-parse --absolute-git-dir` repo identity works under Git-for-Windows sh.exe (L1.10/L4.4).
-- **Node 8** — per-repo hook dispatch via runner repo-identity. Extended the Python runner
-  (`githooks-runner/dotfiles_githooks/`):
-  - NEW `dispatch.py`:
-    - `identify_repo()` -> `(repo_name, root)` via `git rev-parse --absolute-git-dir`
-      (basename = repo; root = git-dir/../.. since git-dir == `<root>/bare-repos/<repo>`).
-      Can't determine -> log warning + return None (caller returns 0, never crashes git).
-    - `dispatch_per_repo_hooks(hook, argv)` -> runs `<root>/hooks/_shared/<hook>` THEN
-      `<root>/hooks/<repo>/<hook>` if present + runnable; passes args + inherited stdin;
-      returns the FIRST non-zero rc (blocks the git op), else 0.
-    - `_is_runnable`: POSIX => must be executable (mirrors git silently skipping non-exec
-      hooks); Windows => any present file (no reliable exec bit).
-    - `_invoke`: POSIX => run script directly (shebang picks interpreter); Windows => via `sh`.
-  - `cli.py` wired: default hook handling FIRST (keeps `names.py` stdin-drain for STDIN hooks),
-    then `_dispatch` to per-repo hooks; unknown hook names still dispatch; dispatch exceptions
-    caught -> return 0.
-- Tests: NEW `tests/test_hooks.{sh,ps1}` (greppable GOOD/BAD banners) — fire REAL git commits
-  through `core.hooksPath` (not the dotfiles dispatcher), so the runner runs exactly as git
-  invokes it (Windows leg = Git-for-Windows sh.exe = L1.10/L4.4). Cases: L1.7, L1.8, L1.9,
-  L1.10, L5.4, L5.4b, L5.6, L5.block; L5.5 named-SKIP.
-- Harness: `wire_hooks`/`Wire-HooksPath`, `write_hook`/`Write-Hook` (LF + shebang + chmod +x on
-  POSIX), `mk_repo_hookable`/`Mk-RepoHookable`, `commit_in`/`Commit-In`, `Tree-Names`.
-- CI: `unit.yml` now installs uv (`astral-sh/setup-uv@v5`) + `uv sync --locked --project
-  githooks-runner` so the hook tests RUN on all 3 OS legs instead of failing-on-missing-uv.
-  `run.{sh,ps1}` auto-discover `test_hooks.*`, so no per-test wiring needed.
-- Local results: `bash tests/run.sh bash` -> 190 PASS / 0 FAIL / 3 SKIP (hooks 16/16);
-  `pwsh tests/run.ps1` -> 187 PASS / 0 FAIL / 3 SKIP (hooks 16/16). The 3 skips: L5.4b
-  (Windows: no executable bit — runs for real on ubuntu/macos), L5.5 (cannot safely unset uv
-  from PATH on the shared runner), and the pre-existing L5.17-autotick.
-- INFERRED identity assumption (L1.10/L4.4) verified locally on the Windows host: in-hook
-  `git rev-parse --absolute-git-dir` returns the absolute bare git-dir; basename == repo name.
-  Orchestrator's CI confirms macOS bash+zsh AND the Windows sh.exe leg.
+## Last node DONE (local green; NOT yet pushed/CI-verified — orchestrator pushes + verifies CI)
+- **Node 9** — single timer fans out via `dotfiles -tick` + interval/jitter.
+  - SWAPPED both backends' generated payload from the legacy baked single-repo add/commit/push to
+    a call to the dispatcher's fan-out tick (loops `bare-repos/*`):
+    - `timer/dotfiles-timer.sh` -> systemd user timer; generates `$DOTFILES_ROOT/.dotfiles-tick.sh`
+      ending `exec bash "$DOTFILES_COMMON/dotfiles.sh" -tick`. Unit keeps the install-time PATH
+      injection (so `uv` resolves) + now exports DOTFILES_COMMON/DOTFILES_ROOT.
+      `OnUnitActiveSec=${interval}s`, `RandomizedDelaySec=${jitter}s`, per-fire `RANDOM%(jitter+1)`
+      sleep baked into the payload.
+    - `timer/dotfiles-timer.ps1` -> admin Task Scheduler task OR non-admin VBS-in-Startup
+      (windowless) + detached pwsh loop. Generates `$DOTFILES_ROOT/.dotfiles-tick.ps1`
+      (`. <dispatcher>; dotfiles -tick`, per-fire `Get-Random` jitter sleep) + a loop script that
+      sleeps `interval`. Singleton task name `dotfiles-git-commit` kept.
+  - Kept ALL backends + singleton names + every subcommand (install/reinstall/enable/disable/
+    start/stop/status/logs/uninstall); reinstall idempotent.
+  - Added `__df_setting_timer_jitter` (default 15) to BOTH dispatchers; interval reader existed.
+  - NEW `tests/test_timer.{sh,ps1}` gating L3.1, L3.4, L3.9, L3.11, L3.12 (Linux PATH),
+    L3.13 (Win non-admin VBS+loop windowless), L3.14, + install/uninstall/enable/disable/status/
+    logs. Assert generated FILE CONTENT where the OS manager can't run; prove fire-calls-tick by
+    calling `dotfiles -tick` DIRECTLY (2 enabled repos advance, 1 disabled does not). Live-manager
+    bits are NAMED SKIPs.
+  - CI: FOLDED into `unit.yml` (auto-discovered) + added `XDG_RUNTIME_DIR` step so the ubuntu leg
+    runs the systemd live-manager assertions. `validate-timer.yml` -> manual-only SUPERSEDED no-op.
+- Local results: `bash tests/run.sh bash` 199 PASS / 0 FAIL / 6 SKIP (timer 9/0/3);
+  `pwsh tests/run.ps1` 196 PASS / 0 FAIL / 4 SKIP (timer 9/0/1). No existing suite regressed.
 
 ## Next node (UNBLOCKED)
-- **Node 9** — timer payload swap + multi-repo + jitter. The single installed OS unit/task/loop
-  (keep all backends + their singleton names) gets its payload swapped to `dotfiles -tick`
-  (loops `bare-repos/*`). Add `[timer] interval` (default 60) + `jitter` (±0-15s). Gate L3.*
-  (install/enable/status/logs/uninstall singleton, fire-calls-tick, one-timer-many-repos,
-  reboot/logon survival, Linux baked PATH, Windows non-admin VBS loop, jitter present).
+- **Node 10** — migration + bootstrap.{sh,ps1}. Relocate the legacy single `~/.dotfiles` bare repo
+  into `bare-repos/machine/` (work-tree files never move; only the git-dir relocates), split the
+  engine into `common/`, uninstall the OLD timer before the move (no stale committer), re-home the
+  dispatcher + `core.hooksPath`. Gate L1.14 (migration), L5.25 (partial migration -> -doctor flags
+  the remaining step). After 2 + 9 (both done).
 
 ## Do NOT
-- re-run a completed node; push to master; weaken tests; `git add -A` unscoped across $HOME;
-  make the runner depend on DOTFILES_ROOT (hooks run under plain git, no dispatcher env —
-  derive root from git-dir/../..); ship a per-repo hook test script with CRLF or no shebang;
-  treat a repo-identity failure as a hard error (return 0, never crash the user's git op).
+- re-run a completed node; push to master; weaken tests; `git add -A` unscoped across $HOME.
+- point the timer's DOTFILES_COMMON at a fake/temp root in tests (it sources the dispatcher from
+  there — use the real engine checkout for COMMON, a temp dir for ROOT).
+- assert generated pwsh-here-string content with fixed-space `-like` (aligned blocks have extra
+  spaces — use `-match '...\s+=\s+...'`).
+- compare `origin_tip <repo>` without an explicit ref (bare origin HEAD is unset -> "HEAD").

@@ -217,6 +217,35 @@ Traps hit during implementation. Read before editing the dispatcher/harness.
   non-zero `_shared`/`<repo>` hook wins. But a FAILURE TO IDENTIFY the repo, or any dispatch
   exception, returns 0 (success) — never crash an unrelated git operation just because the
   hooks tree or git-dir resolution is weird.
+- **A fake `origin` bare repo's symbolic HEAD is unset -> `origin_tip <repo>` (defaulting to HEAD)
+  returns the literal string "HEAD", not a SHA** (node 9 timer tests). `mk_repo_with_origin` /
+  `Mk-RepoWithOrigin` push branch `main` but never set the origin's `HEAD` symref, so
+  `git --git-dir=<origin> rev-parse HEAD` fails and `rev-parse` echoes its input ("HEAD"). A
+  before/after advance check then compared "HEAD"=="HEAD" and falsely passed/failed. FIX: always
+  pass the explicit ref to the tip helper in tick/timer tests: `origin_tip <repo> refs/heads/main`
+  / `Origin-Tip <repo> refs/heads/main` (the existing node-4/5 tests already do this — match them).
+- **A pwsh here-string that ALIGNS assignments with extra spaces breaks a single-space `-like`
+  match** (node 9 timer tests). `Write-LoopScript` emits ``$interval  = 90`` (two spaces, aligned
+  with `$logPath`/`$maxBytes`), so an assertion `-like '*interval = 90*'` (one space) is FALSE even
+  though the value is correct. FIX: assert with `-match 'interval\s+=\s+90'` (whitespace-tolerant)
+  rather than a fixed-space `-like`. (The payload's `$jitter = 7` is single-spaced, so `-like
+  '*jitter = 7*'` there is fine — the trap is specifically the aligned block in the loop script.)
+- **The timer script reads `[timer]` settings by SOURCING the dispatcher, so it must point
+  DOTFILES_COMMON at a REAL engine (with dotfiles.{sh,ps1}) even when DOTFILES_ROOT is a fake test
+  root** (node 9). `timer/dotfiles-timer.{sh,ps1}` source `<common>/dotfiles.{sh,ps1}` to call
+  `__df_setting_timer_interval`/`_jitter` (single source of truth). In tests, set
+  `DOTFILES_COMMON=<the engine checkout>` and `DOTFILES_ROOT=<temp>` separately — pointing COMMON at
+  the temp root would find no dispatcher and silently fall back to defaults (the interval/jitter
+  config-respected assertions would then fail). Sourcing the dispatcher is safe: its bottom-of-file
+  auto-run guard (`[ "${BASH_SOURCE[0]}" = "$0" ]`) is false when sourced, so it only defines funcs.
+- **The Windows non-admin timer `install` SPAWNS a detached pwsh loop that outlives the test**
+  (node 9). `Install-User` runs the VBS launcher which starts a windowless `pwsh -File <loop>`; the
+  test's `uninstall` removes the VBS + scripts and calls `Stop-LoopProcesses`, but repeated
+  `New-Env; install` cycles within one test file can leave loops running against now-deleted temp
+  roots (harmless — the loop's `dotfiles -tick` over an empty root is a no-op — but untidy on a dev
+  box). CI runners are ephemeral so it self-cleans there; on the dev host, kill leftovers with
+  `Get-CimInstance Win32_Process | ? CommandLine -like '*dotfiles-tick-loop*' | Stop-Process`. The
+  final `uninstall` in the test removes the Startup-folder VBS so nothing relaunches at next logon.
 - **zsh->bash re-exec must use the REAL script path (DOTFILES_SELF), not
   `$DOTFILES_COMMON/dotfiles.sh` — DOTFILES_COMMON is env-overridable for doctor engine
   inspection.** The macOS zsh leg re-execs heavy verbs under bash. The re-exec originally ran

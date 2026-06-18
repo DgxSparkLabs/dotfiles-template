@@ -1,25 +1,40 @@
 #!/usr/bin/env pwsh
-# dotfiles-timer.ps1: Manage auto-commit for tracked dotfiles changes.
-# Auto-detects privilege at install time:
-#   Admin     -> Windows Task Scheduler (survives logoff)
-#   Non-admin -> Startup-folder VBS launcher + hidden pwsh while-loop
+# dotfiles-timer.ps1: Manage the SINGLE auto-tick timer for the dotfiles sync engine.
+#
+# Node 9 — the one installed timer no longer bakes a single-repo add/commit/push payload. Its
+# payload now calls the dispatcher's fan-out: `dotfiles -tick` loops EVERY repo under
+# ~/.dotfiles/bare-repos/ (discovery is the registry — a new repo on disk is ticked next cycle).
+# Exactly one task (admin) / one VBS launcher + loop (non-admin) is ever installed.
+#
+# Auto-detects privilege at install time (singleton names kept):
+#   Admin     -> Windows Task Scheduler task 'dotfiles-git-commit' (survives logoff)
+#   Non-admin -> Startup-folder VBS launcher (windowless) + detached pwsh while-loop
+#
+# Cadence + de-sync from ~/.dotfiles/config:
+#   [timer] interval (seconds, default 60)   -> task RepetitionInterval / loop sleep
+#   [timer] jitter   (+- seconds, default 15)-> per-fire randomized 0..jitter sleep baked into
+#                     the payload (so N machines don't push in lockstep). The jitter value is
+#                     embedded in the generated artifact so it is testable without a live manager.
 
 param(
     [Parameter(Position=0, Mandatory=$false)]
     [ValidateSet('install','reinstall','enable','disable','start','stop','uninstall','remove','status','logs')]
-    [string]$Action,
-    [switch]$AddAll
+    [string]$Action
 )
 
 $ErrorActionPreference = 'Stop'
 
-$TaskName     = "dotfiles-git-commit"
-$GitDir       = "$HOME\.dotfiles"
-$WorkTree     = "$HOME"
-$ScriptPath   = "$GitDir\.auto-commit.ps1"
-$LoopPath     = "$GitDir\.auto-commit-loop.ps1"
+# Engine layout: this script is <root>\common\timer\dotfiles-timer.ps1.
+$TimerDir       = Split-Path -Parent $PSCommandPath
+$DotfilesCommon = if ($env:DOTFILES_COMMON) { $env:DOTFILES_COMMON } else { Split-Path -Parent $TimerDir }
+$DotfilesRoot   = if ($env:DOTFILES_ROOT)   { $env:DOTFILES_ROOT }   else { Split-Path -Parent $DotfilesCommon }
+$Dispatcher     = Join-Path $DotfilesCommon 'dotfiles.ps1'
+
+$TaskName     = "dotfiles-git-commit"        # singleton name kept from the legacy timer
+$ScriptPath   = Join-Path $DotfilesRoot '.dotfiles-tick.ps1'        # generated payload
+$LoopPath     = Join-Path $DotfilesRoot '.dotfiles-tick-loop.ps1'   # non-admin loop
 $LauncherPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\DotfilesAutoCommit.vbs"
-$LogPath      = "$env:TEMP\dotfiles-auto-commit.log"
+$LogPath      = "$env:TEMP\dotfiles-tick.log"
 # In user mode the install state is encoded by file presence:
 #   $LoopPath exists, $LauncherPath exists  -> installed + enabled
 #   $LoopPath exists, $LauncherPath missing -> installed + disabled
@@ -31,105 +46,74 @@ function Test-IsAdmin {
     return $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+# Read [timer] interval/jitter via the dispatcher's own readers (single source of truth).
+function Get-TimerSettings {
+    $interval = 60
+    $jitter   = 15
+    if (Test-Path -LiteralPath $Dispatcher) {
+        try {
+            . $Dispatcher *> $null
+            if (Get-Command __df_setting_timer_interval -ErrorAction SilentlyContinue) {
+                $interval = [int](__df_setting_timer_interval)
+            }
+            if (Get-Command __df_setting_timer_jitter -ErrorAction SilentlyContinue) {
+                $jitter = [int](__df_setting_timer_jitter)
+            }
+        } catch { }
+    }
+    return [pscustomobject]@{ Interval = $interval; Jitter = $jitter }
+}
+
 if (-not $Action) {
     $mode = if (Test-IsAdmin) { 'admin (Task Scheduler)' } else { 'user (startup folder + VBS)' }
     Write-Host @"
-Usage: pwsh dotfiles-timer.ps1 [install|reinstall|enable|disable|start|stop|status|logs|uninstall|remove] [-AddAll]
+Usage: pwsh dotfiles-timer.ps1 [install|reinstall|enable|disable|start|stop|status|logs|uninstall|remove]
 
 Detected privilege: $mode
 
-  install [-AddAll]     Write files, enable autostart. Default auto-commit uses git add -u.
-                        With -AddAll, embeds git add -A (stages new files under the work tree).
-  reinstall [-AddAll]   Uninstall + install (same -AddAll behavior).
-  enable     Mark to autostart on next boot/logon (don't necessarily run now).
-  disable    Turn off autostart and stop now (keep files).
-  start      Run now (idempotent — also enables if disabled).
-  stop       Stop running now (transient — auto-resumes on reboot if enabled).
-  status     Show install + autostart + running state.
-  logs       Show recent activity.
-  uninstall  Full removal (alias: remove).
+  install     Write the tick payload + register autostart. The payload runs
+              \`dotfiles -tick\` over EVERY repo under ~/.dotfiles/bare-repos/.
+  reinstall   Uninstall + install (idempotent — always exactly one task/launcher).
+  enable      Mark to autostart on next boot/logon (don't necessarily run now).
+  disable     Turn off autostart and stop now (keep files).
+  start       Run now (idempotent — also enables if disabled).
+  stop        Stop running now (transient — auto-resumes on reboot if enabled).
+  status      Show install + autostart + running state.
+  logs        Show recent activity.
+  uninstall   Full removal (alias: remove).
+
+One timer; its tick fans out over all repos via the dispatcher's -tick.
+Cadence from ~/.dotfiles/config: [timer] interval (default 60s), jitter (default +-15s).
 "@
     exit 1
 }
 
-function Write-CommitScript {
-    param([switch]$AddAll)
-    $addFlag = if ($AddAll) { '-A' } else { '-u' }
+# Generate the payload script: a per-fire random 0..jitter sleep, then `dotfiles -tick` over ALL
+# repos. The jitter + interval values are baked into the file so they are inspectable in tests.
+function Write-TickScript {
+    param([int]$Jitter)
     @"
-`$gitArgs = @('--git-dir', '$($GitDir)', '--work-tree', '$($WorkTree)')
-& git @gitArgs add $addFlag
-& git @gitArgs diff --cached --quiet
-if (`$LASTEXITCODE -ne 0) {
-    `$ts = Get-Date -Format 'o'
-    `$pathsAdded = @(& git @gitArgs diff --cached --diff-filter=A --name-only 2>`$null)
-    `$pathsModified = @(& git @gitArgs diff --cached --diff-filter=M --name-only 2>`$null)
-    `$pathsDeleted = @(& git @gitArgs diff --cached --diff-filter=D --name-only 2>`$null)
-    `$sbjParts = [System.Collections.Generic.List[string]]::new()
-    foreach (`$f in `$pathsAdded) { if (`$f) { `$sbjParts.Add("add `$f") } }
-    foreach (`$f in `$pathsModified) { if (`$f) { `$sbjParts.Add("mod `$f") } }
-    foreach (`$f in `$pathsDeleted) { if (`$f) { `$sbjParts.Add("del `$f") } }
-    `$renRaw = @(& git @gitArgs diff --cached --name-status --diff-filter=R 2>`$null)
-    foreach (`$line in `$renRaw) {
-        if (-not `$line) { continue }
-        `$p = `$line -split "`t"
-        if (`$p.Length -ge 3) {
-            `$sbjParts.Add(("ren {0} -> {1}" -f `$p[1], `$p[2]))
-        }
-    }
-    `$detail = if (`$sbjParts.Count -gt 0) { `$sbjParts -join '; ' } else { 'changes' }
-    `$subjectCore = "chore(dotfiles): `$detail"
-    `$maxLen = 160
-    if (`$subjectCore.Length -gt `$maxLen) {
-        `$allNames = @(& git @gitArgs diff --cached --name-only 2>`$null | Where-Object { `$_ })
-        `$ntotal = `$allNames.Count
-        `$preview = (`$allNames | Select-Object -First 3) -join ', '
-        `$subjectCore = "chore(dotfiles): `$ntotal paths (`$preview, …)"
-        if (`$subjectCore.Length -gt `$maxLen) {
-            `$subjectCore = "chore(dotfiles): `$ntotal paths (see message body)"
-        }
-    }
-    `$subject = "`$subjectCore at `$ts"
-
-    `$bodyLines = [System.Collections.Generic.List[string]]::new()
-    function Append-Section([string]`$title, `$lines) {
-        `$nonEmpty = @(`$lines | Where-Object { `$_ })
-        if (`$nonEmpty.Count -eq 0) { return }
-        [void]`$bodyLines.Add(`$title)
-        foreach (`$x in `$nonEmpty) { [void]`$bodyLines.Add(("  {0}" -f `$x)) }
-        [void]`$bodyLines.Add("")
-    }
-    Append-Section "Added:" `$pathsAdded
-    Append-Section "Modified:" `$pathsModified
-    Append-Section "Deleted:" `$pathsDeleted
-    `$renBody = [System.Collections.Generic.List[string]]::new()
-    foreach (`$line in `$renRaw) {
-        if (-not `$line) { continue }
-        `$p = `$line -split "`t"
-        if (`$p.Length -ge 3) {
-            [void]`$renBody.Add(("  {0} -> {1}" -f `$p[1], `$p[2]))
-        }
-    }
-    if (`$renBody.Count -gt 0) {
-        [void]`$bodyLines.Add("Renamed:")
-        foreach (`$r in `$renBody) { [void]`$bodyLines.Add(`$r) }
-        [void]`$bodyLines.Add("")
-    }
-    `$bodyText = (`$bodyLines -join "`n").TrimEnd()
-    if (`$bodyText) {
-        `$msg = "`$subject`n`n`$bodyText"
-        & git @gitArgs commit -m `$msg
-    } else {
-        & git @gitArgs commit -m `$subject
-    }
+# dotfiles single-timer payload (node 9). Fans out the sync tick over ALL repos under
+# ~/.dotfiles/bare-repos/ via the dispatcher's ``dotfiles -tick`` (discovery is the registry).
+# A per-fire random 0..JITTER sleep de-syncs N machines so they don't push in lockstep.
+`$env:DOTFILES_COMMON = '$DotfilesCommon'
+`$env:DOTFILES_ROOT   = '$DotfilesRoot'
+`$jitter = $Jitter
+if (`$jitter -gt 0) {
+    `$delay = Get-Random -Minimum 0 -Maximum (`$jitter + 1)
+    if (`$delay -gt 0) { Start-Sleep -Seconds `$delay }
 }
-& git @gitArgs push
+. '$Dispatcher'
+dotfiles -tick
 "@ | Set-Content -Path $ScriptPath -Encoding UTF8
 }
 
 function Write-LoopScript {
+    param([int]$Interval)
     @"
-# .auto-commit-loop.ps1 — invoked by the VBS launcher at logon
+# .dotfiles-tick-loop.ps1 — invoked by the VBS launcher at logon (non-admin path).
 `$logPath   = '$LogPath'
+`$interval  = $Interval
 `$maxBytes  = 524288     # 0.5 MB threshold for log rotation
 `$keepCount = 5          # archives to keep before pruning oldest
 
@@ -149,7 +133,7 @@ function Invoke-LogRotation([string]`$path) {
 while (`$true) {
     `$ts = Get-Date -Format 'o'
     try {
-        # Capture all stdout+stderr from the commit script (git output, etc.)
+        # The tick payload applies per-fire jitter, then runs `dotfiles -tick` over all repos.
         `$output = & '$ScriptPath' 2>&1 | Out-String
         if (`$output.Trim()) {
             Invoke-LogRotation `$logPath
@@ -159,7 +143,7 @@ while (`$true) {
         Invoke-LogRotation `$logPath
         Add-Content -Path `$logPath -Value "[`$ts] ERROR: `$(`$_.Exception.Message)"
     }
-    Start-Sleep -Seconds 60
+    Start-Sleep -Seconds `$interval
 }
 "@ | Set-Content -Path $LoopPath -Encoding UTF8
 }
@@ -167,9 +151,10 @@ while (`$true) {
 function Write-VbsLauncher {
     $pwshExe = (Get-Command pwsh).Source
     # VBS literal-quote rule: doubled "" inside a "..." string yields one " in the output.
+    # `0` (WindowStyle Hidden) + WScript host => no console window flash (windowless).
     @"
 Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run """$pwshExe"" -NonInteractive -ExecutionPolicy Bypass -File ""$LoopPath""", 0, False
+WshShell.Run """$pwshExe"" -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File ""$LoopPath""", 0, False
 "@ | Set-Content -Path $LauncherPath -Encoding ASCII
 }
 
@@ -182,13 +167,14 @@ function Stop-LoopProcesses {
 }
 
 function Install-Admin {
-    Write-CommitScript -AddAll:$AddAll
+    $s = Get-TimerSettings
+    Write-TickScript -Jitter $s.Jitter
 
     $action        = New-ScheduledTaskAction -Execute 'pwsh' `
                          -Argument "-NonInteractive -WindowStyle Hidden -File `"$ScriptPath`""
     $triggerLogon  = New-ScheduledTaskTrigger -AtLogOn
     $triggerRepeat = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(30) `
-                         -RepetitionInterval ([TimeSpan]::FromMinutes(1)) `
+                         -RepetitionInterval ([TimeSpan]::FromSeconds($s.Interval)) `
                          -RepetitionDuration ([TimeSpan]::FromDays(365 * 10))
     $settings      = New-ScheduledTaskSettingsSet `
                          -ExecutionTimeLimit ([TimeSpan]::FromMinutes(5)) `
@@ -198,24 +184,24 @@ function Install-Admin {
         -Action $action -Trigger @($triggerLogon, $triggerRepeat) -Settings $settings `
         -RunLevel Limited -Force | Out-Null
 
-    $addHint = if ($AddAll) { 'git add -A' } else { 'git add -u' }
-    Write-Host "[admin] Installed Task Scheduler task '$TaskName' (commits every minute; auto-commit: $addHint)."
+    Write-Host "[admin] Installed Task Scheduler task '$TaskName' (every $($s.Interval)s +-$($s.Jitter)s; payload: dotfiles -tick over all repos)."
 }
 
 function Install-User {
-    Write-CommitScript -AddAll:$AddAll
-    Write-LoopScript
+    $s = Get-TimerSettings
+    Write-TickScript -Jitter $s.Jitter
+    Write-LoopScript -Interval $s.Interval
     Write-VbsLauncher
 
-    # Stop any old loops, then start one immediately so the user doesn't have to log out/in
+    # Stop any old loops, then start one immediately so the user doesn't have to log out/in.
     Stop-LoopProcesses
     Start-Process wscript.exe -ArgumentList "`"$LauncherPath`"" -WindowStyle Hidden
 
     Write-Host "[user] Installed startup launcher: $LauncherPath"
-    Write-Host "       Loop script: $LoopPath"
-    Write-Host "       Log file:    $LogPath"
-    $addHint = if ($AddAll) { 'git add -A' } else { 'git add -u' }
-    Write-Host "       Auto-commit: $addHint"
+    Write-Host "       Tick payload: $ScriptPath"
+    Write-Host "       Loop script:  $LoopPath"
+    Write-Host "       Log file:     $LogPath"
+    Write-Host "       Cadence: every $($s.Interval)s +-$($s.Jitter)s; payload runs dotfiles -tick over all repos."
     Write-Host "       Loop started; will resume automatically on each logon."
 }
 
@@ -254,7 +240,7 @@ function Disable-Timer {
     } else {
         Stop-LoopProcesses
         Remove-Item $LauncherPath -Force -ErrorAction SilentlyContinue
-        Write-Host "[user] Loop stopped and VBS launcher removed from startup folder (loop+commit scripts kept)."
+        Write-Host "[user] Loop stopped and VBS launcher removed from startup folder (loop+tick scripts kept)."
     }
 }
 
@@ -341,10 +327,10 @@ function Get-Logs {
     if (-not $emitted) {
         Write-Host "No log file at $LogPath."
         Write-Host ""
-        Write-Host "The log captures git output (commits, pushes) and errors — silent no-op runs"
-        Write-Host "(when nothing has changed) leave no entry. To verify the loop is alive, use:"
-        Write-Host "  dotfiles-timer status     # shows running PIDs"
-        Write-Host "  config log --oneline      # shows commits the timer has actually made"
+        Write-Host "The log captures tick output (commits, pushes, merges) and errors — silent no-op"
+        Write-Host "runs (nothing changed) leave no entry. To verify the loop is alive, use:"
+        Write-Host "  dotfiles -timer status     # shows running PIDs"
+        Write-Host "  dotfiles <repo> log --oneline   # shows commits the tick has made"
     }
 }
 

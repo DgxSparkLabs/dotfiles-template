@@ -14,6 +14,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Expose the systemd USER session to subsequent steps so the timer tests (test_timer.sh)
+      # can exercise the LIVE manager (L3.1/L3.14 unit count, enable/disable) on the ubuntu VM
+      # instead of taking the named SKIP. The GH ubuntu runner is a VM (not a container) and has
+      # a logind user session; XDG_RUNTIME_DIR makes `systemctl --user` reachable.
+      - name: Export XDG_RUNTIME_DIR (systemd --user)
+        if: runner.os == 'Linux'
+        run: echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+
       # uv is required by the per-repo hook dispatch tests (test_hooks.*): the shared hook
       # stubs exec `uv run --project githooks-runner ...`. Without uv those tests fail loud
       # (by design) rather than skip. setup-uv puts uv on PATH for all later steps/shells.
