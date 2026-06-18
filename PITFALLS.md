@@ -117,3 +117,16 @@ Traps hit during implementation. Read before editing the dispatcher/harness.
   a pipe, preserving `$logf`/`$best_*` state). Glob `for d in "$base"/*/` loops were NOT affected
   (zsh globs by default). Production behavior on bash is identical. Verify on Windows with `bash
   tests/run.sh bash` + `pwsh -File tests/run.ps1`; CI re-verifies the zsh leg.
+- **macOS zsh leg — heavy git verbs re-exec under bash.** zsh word-splitting/array semantics made
+  per-construct fixes unreliable (two attempts — `emulate -L sh`, while-read loops — did NOT clear
+  the macOS zsh merge failures, and zsh can't be reproduced on the Windows host), so
+  tick/show/resolve/doctor now delegate to bash: when the dispatcher is sourced into a non-bash
+  shell (`[ -z "${BASH_VERSION:-}" ]`), `dotfiles()` re-execs `bash "$DOTFILES_COMMON/dotfiles.sh"
+  "$tok" "$@"` (DOTFILES_ROOT passed through the env, HOME inherited) and returns its status. The
+  bottom-of-file guard re-enters `dotfiles()` UNDER bash where `BASH_VERSION` is set, so the same
+  `[ -z ... ]` test is false in the child -> real body runs once, NO recursion. Lightweight verbs
+  (passthrough/-ls/-config/-help/-update/-timer) stay in-shell. The prior `emulate -L sh` /
+  while-read changes are kept (harmless hygiene). NOTE: `$DOTFILES_COMMON` resolution depends on
+  `$0` under non-bash (BASH_SOURCE is unset there); zsh sets `$0` to the sourced file (works), but
+  dash sets `$0` to `dash` (the re-exec then can't find the script unless cwd is the common dir) —
+  irrelevant to the macOS zsh target, but don't "fix" the re-exec by reasoning from a dash repro.

@@ -499,6 +499,27 @@ dotfiles() {
     -*)
       verb="${tok#-}"; verb="${verb#-}"          # strip one OR two leading dashes
       shift
+      # HEAVY verbs run under bash, always. The dispatcher is sourced into the user's
+      # INTERACTIVE shell, which may be zsh, and the git-heavy paths (tick/show/resolve/
+      # doctor) depend on shell-DIALECT behavior that diverges between bash and zsh:
+      # word-splitting of unquoted "$var"/"$(cmd)" (zsh leaves SH_WORD_SPLIT off) and
+      # array/IFS semantics. We tried per-construct zsh fixes (emulate -L sh; while-read
+      # loops — kept below as good hygiene) but the macOS zsh CI leg kept failing the merge
+      # tests with "fatal: Needed a single revision" / "Not a valid object name". Rather than
+      # chase every divergence, run these verbs under ONE shell: if we're NOT in bash, re-exec
+      # the whole command via `bash dotfiles.sh <tok> <args>`. The bottom-of-file guard then
+      # re-enters dotfiles() UNDER bash (BASH_VERSION set there), where this same `[ -z
+      # "${BASH_VERSION:-}" ]` test is FALSE — so the child runs the real body and never
+      # re-execs again (no recursion). DOTFILES_ROOT is passed through the env so the child
+      # resolves the same root; HOME is already inherited. Lightweight verbs are unaffected.
+      case "$verb" in
+        tick|show|resolve|doctor)
+          if [ -z "${BASH_VERSION:-}" ]; then
+            DOTFILES_ROOT="$DOTFILES_ROOT" bash "$DOTFILES_COMMON/dotfiles.sh" "$tok" "$@"
+            return $?
+          fi
+          ;;
+      esac
       case "$verb" in
         h|help)  __df_help ;;
         ls)      __df_ls ;;
