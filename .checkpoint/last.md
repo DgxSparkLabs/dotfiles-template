@@ -2,7 +2,7 @@
 
 Branch: feat/sync-multi-repo-engine
 
-## Last node DONE (local green; NOT yet CI-verified — orchestrator pushes + verifies)
+## Last node DONE (CI-VERIFIED GREEN: run 27789885880, ubuntu+macos+windows ALL success; commit bd5b431)
 - **Node 6** — robustness invariants in BOTH dispatchers (behavior-identical):
   - **Stale-state recovery** (`__df_recover_stale`, per repo, BEFORE staging): leftover MERGE_HEAD
     -> `merge --abort` (fallback `reset --hard HEAD`, then rm MERGE_*); stale `index.lock` older
