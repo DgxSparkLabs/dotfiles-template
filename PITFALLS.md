@@ -312,3 +312,21 @@ Traps hit during implementation. Read before editing the dispatcher/harness.
   .timer + one .service / launcher+loop+payload). GENERAL RULE: when a CI sandbox reports a
   service-manager "available" but can't actually register a unit, do NOT chase a cleverer
   probe — gate the live asserts behind an explicit opt-in env var that CI never sets.
+- **GH windows runners are ADMIN -> force user-mode via `DOTFILES_TIMER_FORCE_USER` to test the
+  non-admin VBS+loop file generation deterministically** (node 9 CI fix #3). The windows
+  Task-Scheduler vs non-admin branch in `dotfiles-timer.ps1 install` is chosen by `Test-IsAdmin`.
+  GitHub windows runners execute ELEVATED, so install ALWAYS took the admin path (writes only the
+  payload = 1 file) — but the non-admin file-presence singleton asserts (L3.1 install, L3.14
+  reinstall) expect the USER backend's THREE artifacts (VBS launcher in Startup + loop script +
+  payload) and read 1, failing "expected [3] got [1]". A live-elevation PROBE can't be relied on to
+  pick the user path on an admin runner, so add a TEST SEAM independent of real elevation:
+  `Test-IsAdmin` returns `$false` when `DOTFILES_TIMER_FORCE_USER` ∈ {1,true,TRUE,True} (default,
+  env unset: genuine auto-detect, behavior unchanged). The test sets
+  `$env:DOTFILES_TIMER_FORCE_USER='1'` around install/reinstall (try/finally: `uninstall` to stop the
+  spawned loop + remove the Startup VBS, THEN unset the var) so the 3 user-mode files are written on
+  ANY windows runner. This is ORTHOGONAL to `DOTFILES_TIMER_LIVE` (fix #2): FORCE_USER selects which
+  on-disk backend the file asserts exercise; LIVE gates the actual scheduler registration/transitions.
+  Note the child `Invoke-Timer` (`pwsh -File`) INHERITS the parent's env, so the seam + its cleanup
+  uninstall both see the var. GENERAL RULE: when the production code branches on a runtime fact the CI
+  sandbox forces the "wrong" way (elevation, OS, TTY), add an explicit force-env seam so the OTHER
+  branch's on-disk artifacts stay deterministically testable — don't make the asserts probe-dependent.

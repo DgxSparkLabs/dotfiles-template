@@ -27,7 +27,27 @@ Branch: feat/sync-multi-repo-engine
 - Local results: `bash tests/run.sh bash` 199 PASS / 0 FAIL / 6 SKIP (timer 9/0/3);
   `pwsh tests/run.ps1` 196 PASS / 0 FAIL / 4 SKIP (timer 9/0/1). No existing suite regressed.
 
-## Node 9 CI FIX #2 (this commit — ubuntu STILL RED on the live-manager asserts)
+## Node 9 CI FIX #3 (this commit — windows RED: "expected [3] got [1]")
+- After FIX #2 windows went RED: L3.1-install-singleton / L3.14-reinstall-idempotent failed
+  "exactly one launcher+loop+payload generated (non-admin) expected [3] got [1]". Cause: GH windows
+  runners run ELEVATED, so `dotfiles-timer.ps1 install` took the ADMIN Task Scheduler branch (writes
+  ONLY the payload = 1 file) while the non-admin file-presence asserts expect the USER backend's 3
+  artifacts (VBS launcher + loop + payload).
+- FIX (test seam, NO real assert weakened):
+  - `timer/dotfiles-timer.ps1` `Test-IsAdmin`: returns `$false` when
+    `DOTFILES_TIMER_FORCE_USER` ∈ {1,true,TRUE,True} -> forces the user-mode install path regardless
+    of real elevation. Default (env unset): genuine auto-detect, behavior unchanged.
+  - `tests/test_timer.ps1` L3.1/L3.14: set `$env:DOTFILES_TIMER_FORCE_USER='1'` around
+    install/reinstall (try/finally: `uninstall` to stop the spawned loop + remove the Startup VBS,
+    then unset the var) so the 3 user-mode files are generated deterministically on ANY windows runner.
+  - Live Task-Scheduler count/transition asserts stay gated behind `DOTFILES_TIMER_LIVE` (FIX #2).
+  - Added an end-of-file safety-net killing any detached `*.dotfiles-tick-loop.ps1` pwsh the
+    non-uninstalling install asserts (L3.4/L3.11b/L3.13/L3.x) spawn on a non-admin dev host.
+- Local re-verify (Windows host; live bits SKIP as on CI): `pwsh tests/run.ps1` timer 9/0/1, 0 FAIL
+  overall; `bash tests/run.sh bash` timer 9/0/3, 0 FAIL overall (unchanged). Confirmed NO runaway
+  loop survives the run.
+
+## Node 9 CI FIX #2 (ubuntu STILL RED on the live-manager asserts)
 - After CI FIX #1 the strengthened `have_systemd()` probe STILL passed on GH ubuntu (the fake
   `systemd --user` reports running/degraded AND `list-unit-files` succeeds) — but enabling a user
   unit there registers ZERO findable units, so L3.1/L3.14/L3.x ran and failed "expected [1] got [0]".

@@ -41,6 +41,12 @@ $LogPath      = "$env:TEMP\dotfiles-tick.log"
 #   $LoopPath missing                       -> not installed
 
 function Test-IsAdmin {
+    # TEST SEAM: DOTFILES_TIMER_FORCE_USER=1/true forces the NON-admin (user-mode) install path
+    # regardless of the real elevation. GitHub windows runners execute elevated (admin), so without
+    # this the install would always take the Task Scheduler branch and never generate the user-mode
+    # VBS launcher + loop + payload that the non-admin file-presence asserts (L3.1/L3.14) check.
+    # Default (env unset): genuine elevation auto-detect -> admin = Task Scheduler, else user mode.
+    if ($env:DOTFILES_TIMER_FORCE_USER -in @('1','true','TRUE','True')) { return $false }
     $id = [System.Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object System.Security.Principal.WindowsPrincipal($id)
     return $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)

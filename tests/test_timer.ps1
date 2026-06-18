@@ -125,35 +125,46 @@ if (Test-IsAdminPwsh) {
 # ------------------------------------------------------------------------------------------------
 # L3.1 / L3.14 — install creates exactly ONE task/launcher; reinstall stays idempotent (still one).
 New-Env
-$out = Invoke-Timer install
-T-Start L3.1-install-singleton GOOD
 if (Timer-Live) {
+  $out = Invoke-Timer install
+  T-Start L3.1-install-singleton GOOD
   $tasks = @(Get-ScheduledTask -TaskName 'dotfiles-git-commit' -ErrorAction SilentlyContinue)
   Assert-Eq "L3.1 exactly one registered task (live manager)" $tasks.Count 1
-} else {
-  # Non-admin registry = file presence: exactly one VBS launcher + one loop + one payload.
-  $n = 0
-  if (Test-Path -LiteralPath (LauncherFile)) { $n++ }
-  if (Test-Path -LiteralPath (LoopFile))     { $n++ }
-  if (Test-Path -LiteralPath (PayloadFile))  { $n++ }
-  Assert-Eq "L3.1 exactly one launcher+loop+payload generated (non-admin)" $n 3
-}
 
-$out = Invoke-Timer reinstall
-T-Start L3.14-reinstall-idempotent GOOD
-if (Timer-Live) {
+  $out = Invoke-Timer reinstall
+  T-Start L3.14-reinstall-idempotent GOOD
   $tasks = @(Get-ScheduledTask -TaskName 'dotfiles-git-commit' -ErrorAction SilentlyContinue)
   Assert-Eq "L3.14 still exactly one task after reinstall (live manager)" $tasks.Count 1
 } else {
-  $n = 0
-  if (Test-Path -LiteralPath (LauncherFile)) { $n++ }
-  if (Test-Path -LiteralPath (LoopFile))     { $n++ }
-  if (Test-Path -LiteralPath (PayloadFile))  { $n++ }
-  Assert-Eq "L3.14 still exactly one launcher+loop+payload after reinstall (non-admin)" $n 3
-}
+  # Non-admin registry = file presence: exactly one VBS launcher + one loop + one payload.
+  # GH windows runners run ELEVATED (admin), so force the USER backend via the test seam so the
+  # user-mode artifacts (VBS launcher + loop + payload) are generated deterministically on ANY
+  # windows runner — admin or not. Unset the var afterward. Live Task-Scheduler counts stay gated
+  # behind DOTFILES_TIMER_LIVE (see the Timer-Live branch above).
+  $env:DOTFILES_TIMER_FORCE_USER = '1'
+  try {
+    $out = Invoke-Timer install
+    T-Start L3.1-install-singleton GOOD
+    $n = 0
+    if (Test-Path -LiteralPath (LauncherFile)) { $n++ }
+    if (Test-Path -LiteralPath (LoopFile))     { $n++ }
+    if (Test-Path -LiteralPath (PayloadFile))  { $n++ }
+    Assert-Eq "L3.1 exactly one launcher+loop+payload generated (non-admin)" $n 3
 
-# clean up any launcher we dropped into the real Startup folder (non-admin path).
-Invoke-Timer uninstall | Out-Null
+    $out = Invoke-Timer reinstall
+    T-Start L3.14-reinstall-idempotent GOOD
+    $n = 0
+    if (Test-Path -LiteralPath (LauncherFile)) { $n++ }
+    if (Test-Path -LiteralPath (LoopFile))     { $n++ }
+    if (Test-Path -LiteralPath (PayloadFile))  { $n++ }
+    Assert-Eq "L3.14 still exactly one launcher+loop+payload after reinstall (non-admin)" $n 3
+  } finally {
+    # Clean up: uninstall (in forced-user mode) removes the Startup-folder VBS + scripts AND stops
+    # any detached pwsh loop the install spawned, so nothing outlives the test. Then unset the seam.
+    Invoke-Timer uninstall | Out-Null
+    $env:DOTFILES_TIMER_FORCE_USER = $null
+  }
+}
 
 # ------------------------------------------------------------------------------------------------
 # L3.4(direct) / L3.9 — `dotfiles -tick` advances ALL enabled repos in ONE run; disabled repo does
@@ -206,5 +217,15 @@ if (Timer-Live) {
 } else {
   T-Skip "L3.2/L3.3/L3.6/L3.7 enable/disable/status/logs: $LiveSkipReason"
 }
+
+# ------------------------------------------------------------------------------------------------
+# Final safety-net cleanup (PITFALLS "Windows non-admin timer install SPAWNS a detached pwsh loop").
+# Several install asserts above (L3.4/L3.11/L3.11b/L3.13/L3.x) intentionally do NOT uninstall, and on
+# a non-admin dev host the timer's best-effort `Start-Process wscript` launches a windowless pwsh loop
+# pointed at the per-test temp root. Those loops are harmless no-ops over now-deleted roots (and CI
+# runners are ephemeral), but we kill any we spawned so NO runaway loop outlives the test on a dev box.
+Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" -ErrorAction SilentlyContinue |
+  Where-Object { $_.CommandLine -and $_.CommandLine -like '*-File *.dotfiles-tick-loop.ps1*' } |
+  ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {} }
 
 T-Summary

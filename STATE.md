@@ -205,7 +205,26 @@ Branch: `feat/sync-multi-repo-engine`. Build order = the plan's "Build order —
   singleton counts. Local re-verify (Windows; live bits SKIP as on CI): bash 199/0/6 (timer 9/0/3),
   pwsh 196/0/4 (timer 9/0/1), 0 FAIL. Committed (NOT pushed); orchestrator re-verifies CI.
 
+- **Node 9 CI FIX #3 (windows RED -> force user-mode for the non-admin file asserts)** — after FIX #2,
+  windows went RED: L3.1/L3.14 "expected [3] got [1]". Cause: GH windows runners run ELEVATED, so
+  `dotfiles-timer.ps1 install` took the ADMIN Task Scheduler branch (writes only the payload, 1 file),
+  but the non-admin file-presence asserts expect the USER backend's 3 files (VBS launcher + loop +
+  payload). FIX (test seam, no real assert weakened): `dotfiles-timer.ps1` `Test-IsAdmin` now honors
+  `DOTFILES_TIMER_FORCE_USER` ∈ {1,true} -> returns `$false` (forces the user-mode install path
+  regardless of real elevation); default behavior (env unset) unchanged. `test_timer.ps1` L3.1/L3.14
+  set `$env:DOTFILES_TIMER_FORCE_USER='1'` around install/reinstall (try/finally: uninstall to clean
+  up the spawned loop + Startup VBS, then unset the var) so the 3 user-mode artifacts are generated
+  deterministically on ANY windows runner. Live Task-Scheduler count/transition asserts stay gated
+  behind `DOTFILES_TIMER_LIVE` (FIX #2) — unchanged. Added an end-of-file safety-net that stops any
+  detached `*.dotfiles-tick-loop.ps1` pwsh the non-uninstalling install asserts (L3.4/L3.11b/L3.13/
+  L3.x) spawn on a non-admin dev host (CI runners are ephemeral; this just keeps the dev box tidy).
+  Local re-verify (Windows host; live bits SKIP): `pwsh tests/run.ps1` 9/0/1 timer, 0 FAIL overall;
+  `bash tests/run.sh bash` 9/0/3 timer, 0 FAIL overall (unchanged); confirmed NO runaway loop survives.
+  Committed (NOT pushed); orchestrator re-verifies CI.
+
 ## CI status
+- Node 9 CI FIX #3 committed locally (force user-mode via `DOTFILES_TIMER_FORCE_USER` for the windows
+  non-admin file asserts); NOT YET pushed/CI-verified (orchestrator re-verifies). Prior:
 - Node 9 CI FIX #2 committed locally (live-manager asserts gated behind `DOTFILES_TIMER_LIVE`
   opt-in; usability probe removed); NOT YET pushed/CI-verified (orchestrator re-verifies). Prior:
 - Node 9 CI FIX #1 committed (artifacts-before-registration + strong systemd probe + no
