@@ -11,6 +11,20 @@ _fail()    { _FAIL=$((_FAIL+1)); printf '=== %s RESULT=FAIL (%s) ===\n' "$CURREN
 _skip()    { _SKIP=$((_SKIP+1)); printf '=== %s RESULT=SKIP (%s) ===\n' "$CURRENT_TEST" "$1"; }
 _summary() { printf '=== SUMMARY pass=%d fail=%d skip=%d ===\n' "$_PASS" "$_FAIL" "$_SKIP"; [ "$_FAIL" -eq 0 ]; }
 
+# Portable in-place sed. GNU sed accepts `sed -i 's/.../.../' file`, but BSD/macOS sed
+# treats the token after -i as a mandatory backup suffix, so `sed -i 's/.../.../' file`
+# misparses on macOS (bash 3.2 leg): the substitution silently never happens, the divergent
+# commit is never made, and the empty/unchanged merge later feeds empty revisions to
+# `git log`/`update-ref` (the macOS-only "fatal: Needed a single revision" failures in
+# L2.2/L2.3/L2.4/L2.5/L2.12/L2.13). Rewrite via a temp file to avoid the -i suffix divergence
+# entirely. Usage: sed_inplace <sed-script> <file>
+sed_inplace() {
+  local _script="$1" _file="$2" _tmp
+  _tmp="$(mktemp)"
+  sed "$_script" "$_file" > "$_tmp" && cat "$_tmp" > "$_file"
+  rm -f "$_tmp"
+}
+
 assert_eq()           { if [ "$2" = "$3" ]; then _pass; else _fail "$1: expected [$3] got [$2]"; fi; }
 assert_contains()     { case "$2" in *"$3"*) _pass;; *) _fail "$1: [$2] lacks [$3]";; esac; }
 assert_not_contains() { case "$2" in *"$3"*) _fail "$1: [$2] unexpectedly has [$3]";; *) _pass;; esac; }

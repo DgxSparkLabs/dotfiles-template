@@ -26,7 +26,7 @@ dotfiles doc commit -q -m "doc: base" >/dev/null 2>&1
 dotfiles doc push -q origin main >/dev/null 2>&1
 mk_machine 2 doc main
 # M1 edits line1; M2 edits line5 (disjoint lines of the same file).
-sed -i 's/^l1$/M1L1/' "$HOME/.config/doc/file"
+sed_inplace 's/^l1$/M1L1/' "$HOME/.config/doc/file"
 GIT_AUTHOR_DATE="2021-01-01T00:00:00" GIT_COMMITTER_DATE="2021-01-01T00:00:00" tick1 doc
 write_machine 2 .config/doc/file "$(printf 'l1\nl2\nl3\nl4\nM2L5\n')"
 GIT_AUTHOR_DATE="2021-02-01T00:00:00" GIT_COMMITTER_DATE="2021-02-01T00:00:00" tick_machine 2 doc
@@ -48,7 +48,7 @@ dotfiles clash commit -q -m base >/dev/null 2>&1
 dotfiles clash push -q origin main >/dev/null 2>&1
 mk_machine 2 clash main
 # M1: MID->X older date, push.
-sed -i 's/^MID$/X/' "$HOME/.config/clash/file"
+sed_inplace 's/^MID$/X/' "$HOME/.config/clash/file"
 GIT_AUTHOR_DATE="2020-01-01T00:00:00" GIT_COMMITTER_DATE="2020-01-01T00:00:00" tick1 clash
 # M2: MID->Y newer date; tick must fetch X, clash on the same line, never block, Y wins.
 write_machine 2 .config/clash/file "$(printf 'top\nY\nbot\n')"
@@ -233,7 +233,7 @@ dotfiles rec add -- .config/rec/file >/dev/null 2>&1
 dotfiles rec commit -q -m base >/dev/null 2>&1
 dotfiles rec push -q origin main >/dev/null 2>&1
 mk_machine 2 rec main
-sed -i 's/^MID$/X/' "$HOME/.config/rec/file"
+sed_inplace 's/^MID$/X/' "$HOME/.config/rec/file"
 GIT_AUTHOR_DATE="2020-01-01T00:00:00" GIT_COMMITTER_DATE="2020-01-01T00:00:00" tick1 rec
 write_machine 2 .config/rec/file "$(printf 'a\nY\nb\n')"
 GIT_AUTHOR_DATE="2022-01-01T00:00:00" GIT_COMMITTER_DATE="2022-01-01T00:00:00" tick_machine 2 rec
@@ -260,7 +260,7 @@ run_clash() {  # $1=m1date $2=m2date ; echoes the winning content seen on M2
   dotfiles det commit -q -m base >/dev/null 2>&1
   dotfiles det push -q origin main >/dev/null 2>&1
   mk_machine 2 det main
-  sed -i 's/^MID$/X/' "$HOME/.config/det/file"
+  sed_inplace 's/^MID$/X/' "$HOME/.config/det/file"
   GIT_AUTHOR_DATE="$1" GIT_COMMITTER_DATE="$1" tick1 det
   write_machine 2 .config/det/file "$(printf 'a\nY\nb\n')"
   GIT_AUTHOR_DATE="$2" GIT_COMMITTER_DATE="$2" tick_machine 2 det >/dev/null 2>&1

@@ -78,3 +78,20 @@ Traps hit during implementation. Read before editing the dispatcher/harness.
   failed. In `test_merge.ps1`, after `[IO.File]::WriteAllText(hook, "#!/bin/sh`nexit 1`n")`, do
   `if ($IsLinux -or $IsMacOS) { chmod +x $hook }`. (The bash test already `chmod +x`'d its hook,
   which is why bash L2.10 passed CI.)
+- **`sed -i 's/.../.../' file` is GNU-only; BSD/macOS sed misparses it (node-5 macOS-only RED).**
+  GNU sed (Linux/CI ubuntu + Git-for-Windows) treats `-i` as "edit in place, no backup". BSD sed
+  (macOS, which also ships bash 3.2.57) treats the token *after* `-i` as a MANDATORY backup suffix,
+  so `sed -i 's/^MID$/X/' file` consumes the script as the suffix and the file as the program — the
+  substitution silently never happens. In `tests/test_merge.sh` that meant M1's divergent edit was
+  never made, so the second machine's tick saw no real clash: the merge produced no conflicted
+  paths, no loser was pinned, and the newest-wins `git log -1 --format=%ct <rev>` / `update-ref`
+  later got fed empty/unchanged revisions -> `fatal: Needed a single revision` / `Not a valid
+  object name`. This hit EXACTLY the four `sed -i` call sites and the tests that depend on them:
+  L2.2, L2.3 (and L2.4/L2.5 which reuse L2.3's clash), L2.12, L2.13. Everything else (config /
+  dispatcher / tick, and the modify/delete L2.7 which uses `printf >`/`git rm`, not sed) passed on
+  macOS, which is why the failure looked merge-specific. FIX: a portable `sed_inplace <script>
+  <file>` helper in `tests/harness.sh` that rewrites via a temp file (`sed script file > tmp; cat
+  tmp > file`), avoiding the `-i` suffix divergence entirely. NOTE for the next agent: the real
+  macOS leg is BSD sed, NOT a bash-4 builtin — `dotfiles.sh`'s `__df_reconcile` itself was already
+  3.2-clean (no `${var,,}`, `mapfile`, `declare -A`, `${arr[-1]}`, `&>`, or `local -n`); the audit
+  came up empty there, so the only macOS-incompat construct was the test harness's `sed -i`.
