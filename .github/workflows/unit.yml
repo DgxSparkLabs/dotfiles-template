@@ -1,0 +1,32 @@
+name: unit
+on:
+  push:
+  workflow_dispatch:
+
+# L0 + L1 dispatcher tests across OS and shells (bash, zsh, pwsh).
+jobs:
+  unit:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: bash harness (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: bash tests/run.sh bash
+
+      - name: zsh harness (macOS)
+        if: runner.os == 'macOS'
+        run: zsh tests/run.sh zsh
+
+      - name: bash harness (Windows / Git-Bash)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: bash tests/run.sh bash
+
+      - name: pwsh harness (all OS)
+        shell: pwsh
+        run: ./tests/run.ps1

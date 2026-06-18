@@ -1,0 +1,12 @@
+# Cross-OS line-ending normalization (L4.2): text is LF in the repo, checked out per platform.
+* text=auto
+
+# POSIX shell + hook stubs MUST stay LF even on Windows (Git-Bash/sh.exe executes them).
+githooks/* text eol=lf
+*.sh text eol=lf
+githooks-runner/**/*.py text eol=lf
+githooks-runner/pyproject.toml text eol=lf
+githooks-runner/uv.lock text eol=lf
+
+# PowerShell is fine either way; keep LF in-repo for a clean diff.
+*.ps1 text eol=lf

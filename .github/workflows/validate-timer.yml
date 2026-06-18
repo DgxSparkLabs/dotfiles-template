@@ -1,8 +1,8 @@
 name: Validate Timer Scripts
 
+# TEMPORARILY manual-only: paths moved to timer/ in the engine restructure (node 0);
+# reworked in build node 9 (timer payload swap). Re-enable push/PR there.
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
 jobs:

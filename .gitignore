@@ -1,14 +1,20 @@
-/*
-!.gitignore
-!.dotfiles/
-# Defensive: never track these even if explicitly added
-.ssh/id_*
-.ssh/*_rsa
-.ssh/*_ed25519
-.ssh/known_hosts
-.netrc
-.aws/credentials
-.env
-.env.*
-*.pem
-*.key
+# The engine (`~/.dotfiles/common`) is a NORMAL git repo — ordinary ignore rules apply.
+# (The old `/*` $HOME-whitelist is gone: bare repos live under ~/.dotfiles/bare-repos/, not here.)
+
+# Claude Code session state, worktrees, local settings — never part of the template
+.claude/
+
+# Research/scratch artifacts (skills write here)
+.research/
+
+# Python / uv
+__pycache__/
+*.pyc
+.venv/
+
+# Test harness scratch (fake HOMEs and origins are created under here at runtime)
+tests/.work/
+
+# OS noise
+.DS_Store
+Thumbs.db

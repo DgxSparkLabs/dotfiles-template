@@ -1,8 +1,8 @@
 name: Validate Git Hooks Runner
 
+# TEMPORARILY manual-only: paths moved to githooks/ + githooks-runner/ in the engine
+# restructure (node 0); reworked in build node 8 (per-repo hook dispatch).
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
 jobs:
