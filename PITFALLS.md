@@ -147,6 +147,30 @@ Traps hit during implementation. Read before editing the dispatcher/harness.
   its mtime to 1 day ago (`touch -d '1 day ago'` / BSD `touch -t`; pwsh `(...).LastWriteTime =
   (Get-Date).AddDays(-1)`). For the LIVE-lock concurrency test (L5.27) do the OPPOSITE: leave the
   lock fresh and keep the default 60s threshold so it reads as live and the second tick skips.
+- **PowerShell `-like` is CASE-INSENSITIVE; bash `case`-glob is case-SENSITIVE** (node 7).
+  `Assert-NotContains $out 'OVERLAP'` FAILED on the clean doctor output because that output
+  contains "no overlaps" and `-like '*OVERLAP*'` matches "overlap" case-insensitively — while the
+  IDENTICAL bash assertion (`case "$out" in *OVERLAP*)`) PASSED because bash glob matching is
+  case-sensitive. So a shell-parity test can silently diverge purely on case folding. FIX: assert
+  on a token that can't collide across case (the clean run was instead checked with
+  `not-contains "error(s)"`). When porting an assertion between the two harnesses, remember the
+  matchers differ in case sensitivity, not just syntax.
+- **`-doctor`/`-show`/`-resolve` are no longer stubs** — as of node 7 ALL heavy verbs are
+  implemented; none return exit 3. (Earlier PITFALL entry about "exit 3 = not implemented" is now
+  fully obsolete.)
+- **`DOTFILES_COMMON` is env-overridable (both shells, node 7).** Default still resolves from the
+  script's own location (`BASH_SOURCE`/`$PSCommandPath`), but `$env:DOTFILES_COMMON` /
+  exported `DOTFILES_COMMON` wins if set. This is what lets the engine-behind (L0.19) and
+  engine-not-a-git-repo (L5.26) doctor tests point the engine at a FAKE dir in a child process
+  (PS `Invoke-DF` child inherits the env var; bash test reassigns the var in-process). The zsh
+  heavy-verb re-exec forwards `DOTFILES_COMMON` through the env too. If you spawn a child that must
+  see the REAL engine, do NOT leak a test's `$env:DOTFILES_COMMON` — the PS doctor tests reset it
+  to `$null` immediately after each `Invoke-DF`.
+- **Doctor exit policy: nonzero ONLY on an ERROR** (node 7). ERROR = a path tracked by >1 repo
+  (overlap), a corrupt/non-git dir under `bare-repos/`, or the engine dir not being a git repo.
+  Everything else (no upstream, detached HEAD, hooksPath unset/missing, tick off, engine behind) is
+  a warning/info and KEEPS exit 0. Don't "tighten" doctor to fail on warnings — the plan (G) shows
+  `--update`-class advice as warnings, and a noisy-but-healthy machine must still script-pass.
 - **macOS zsh leg — heavy git verbs re-exec under bash.** zsh word-splitting/array semantics made
   per-construct fixes unreliable (two attempts — `emulate -L sh`, while-read loops — did NOT clear
   the macOS zsh merge failures, and zsh can't be reproduced on the Windows host), so

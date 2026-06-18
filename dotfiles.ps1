@@ -9,7 +9,9 @@
 # Override $env:DOTFILES_ROOT to point at a different ~/.dotfiles (the test harness does this).
 
 # Engine dir = where THIS script lives (…/.dotfiles/common). Root = its parent by default.
-$DotfilesCommon = Split-Path -Parent $PSCommandPath
+# $env:DOTFILES_COMMON overrides the engine dir (tests point it at a fake engine for the
+# engine-behind / engine-not-a-git-repo doctor cases); $env:DOTFILES_ROOT overrides the root.
+$DotfilesCommon = if ($env:DOTFILES_COMMON) { $env:DOTFILES_COMMON } else { Split-Path -Parent $PSCommandPath }
 $DotfilesRoot = if ($env:DOTFILES_ROOT) { $env:DOTFILES_ROOT } else { Split-Path -Parent $DotfilesCommon }
 
 function __df_debug($m) { if ($env:DOTFILES_DEBUG) { [Console]::Error.WriteLine("[dotfiles] $m") } }
@@ -421,8 +423,149 @@ function __df_tick {
   $global:LASTEXITCODE = $rc
 }
 
-# --- Heavy verbs: -doctor stubbed (node 7); -show/-resolve implemented (node 5). ---
-function __df_doctor  { [Console]::Error.WriteLine('dotfiles -doctor: not implemented yet (build node 7)');  $global:LASTEXITCODE = 3 }
+# --- Node 7: -doctor — health + the load-bearing exclusive-ownership invariant. -------
+# Prints an engine line, a per-repo status line, an ownership (overlap) check, and a
+# warnings/info block. EVERY problem prints an ACTIONABLE fix line. Exit policy: nonzero
+# ONLY when at least one ERROR exists (a path tracked by >1 repo, or a corrupt/non-git repo
+# under bare-repos/). Warnings/info do NOT fail the exit code. Behavior-identical to the bash
+# __df_doctor. See plan "F. Expected command outputs" and "G. Doctor — error cases".
+function __df_hooks_target { Join-Path $DotfilesCommon 'githooks' }
+
+function __df_doctor {
+  $errors = 0; $warnings = 0
+  $warnLines = New-Object System.Collections.Generic.List[string]
+
+  # --- engine line -------------------------------------------------------------------
+  $ecommon = $DotfilesCommon
+  git --git-dir="$ecommon/.git" rev-parse --git-dir 2>$null | Out-Null
+  if ($LASTEXITCODE -eq 0) {
+    $ebranch = (git -C "$ecommon" symbolic-ref --short -q HEAD 2>$null | Out-String).Trim()
+    if (-not $ebranch) { $ebranch = '(detached)' }
+    $eupstream = (git -C "$ecommon" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -eq 0 -and $eupstream) {
+      $behind = (git -C "$ecommon" rev-list --count 'HEAD..@{u}' 2>$null | Out-String).Trim()
+      if ($behind -match '^[0-9]+$' -and [int]$behind -gt 0) {
+        Write-Output ("engine:  {0}  branch {1}, {2} commit(s) behind {3}" -f $ecommon, $ebranch, $behind, $eupstream)
+        $warnLines.Add("  engine: behind upstream by $behind commit(s)   fix -> dotfiles --update")
+        $warnings++
+      } else {
+        Write-Output ("engine:  {0}  branch {1}, up to date" -f $ecommon, $ebranch)
+      }
+    } else {
+      Write-Output ("engine:  {0}  branch {1} (no upstream)" -f $ecommon, $ebranch)
+    }
+  } else {
+    # L5.26: engine dir exists but is NOT a git repo -> `dotfiles --update` would fail. ERROR.
+    Write-Output ("engine:  {0}  NOT a git repo" -f $ecommon)
+    $warnLines.Add("  engine: $ecommon is not a git repo (dotfiles --update would fail)   fix -> re-clone the engine into it")
+    $errors++
+  }
+
+  # --- per-repo block + overlap accounting -------------------------------------------
+  $base = __df_reposdir
+  Write-Output 'repos:'
+  $owners = New-Object System.Collections.Generic.List[object]   # @{ Path=...; Repo=... }
+  $totalPaths = 0; $repoCount = 0
+  if (Test-Path -LiteralPath $base) {
+    foreach ($d in Get-ChildItem -Directory -LiteralPath $base | Sort-Object Name) {
+      $repo = $d.Name
+      $gd = $d.FullName
+      if (-not (__df_is_repo $gd)) {
+        Write-Output ("  {0,-8} NOT a git repo (skipped)" -f $repo)
+        $warnLines.Add("  ${repo}: not a git repo under bare-repos/   fix -> remove $gd or restore the repo")
+        $errors++
+        continue
+      }
+      $repoCount++
+
+      $branch = (git --git-dir="$gd" symbolic-ref --short -q HEAD 2>$null | Out-String).Trim()
+      if (-not $branch) {
+        git --git-dir="$gd" rev-parse --verify -q HEAD 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) { $branch = 'detached' } else { $branch = 'none' }
+      }
+      $upstream = (git --git-dir="$gd" --work-tree="$env:HOME" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>$null | Out-String).Trim()
+      if ($LASTEXITCODE -ne 0 -or -not $upstream) { $upstream = '(none)' }
+
+      $tickv = if ((__df_setting_tick $repo) -eq 'true') { 'on' } else { 'off' }
+      $addv  = if ((__df_setting_add $repo) -eq '-A') { 'all' } else { 'tracked' }
+
+      $hp = (git --git-dir="$gd" config --get core.hooksPath 2>$null | Out-String).Trim()
+      $hooks = if ($hp -and (Test-Path -LiteralPath $hp)) { 'wired' } else { 'MISSING' }
+
+      Write-Output ("  {0,-8} branch {1,-8} upstream {2,-16} tick:{3,-3} add:{4,-7} hooks:{5}" -f `
+        $repo, $branch, $upstream, $tickv, $addv, $hooks)
+
+      # --- warnings / info per repo (each with a fix) ---
+      if ($upstream -eq '(none)' -and $branch -ne 'detached' -and $branch -ne 'none') {
+        $warnLines.Add("  ${repo}: no upstream for '$branch'   fix -> dotfiles $repo push -u origin $branch")
+        $warnings++
+      }
+      if ($branch -eq 'detached') {
+        $warnLines.Add("  ${repo}: detached HEAD (no branch)   fix -> dotfiles $repo checkout <branch>")
+        $warnings++
+      } elseif ($branch -eq 'none') {
+        $warnLines.Add("  ${repo}: no HEAD branch   fix -> dotfiles $repo checkout <branch>")
+        $warnings++
+      }
+      if (-not $hp) {
+        $warnLines.Add("  ${repo}: core.hooksPath not set   fix -> dotfiles $repo config core.hooksPath `"`$HOME/.dotfiles/common/githooks`"")
+        $warnings++
+        if ($tickv -eq 'on') {
+          $warnLines.Add("  ${repo}: tick is ON but core.hooksPath is unset (auto-commits run no hooks)   fix -> dotfiles $repo config core.hooksPath `"`$HOME/.dotfiles/common/githooks`"")
+          $warnings++
+        }
+      } elseif (-not (Test-Path -LiteralPath $hp)) {
+        $warnLines.Add(("  {0}: core.hooksPath set to '{1}' but that dir is missing   fix -> dotfiles {0} config core.hooksPath `"{2}`"" -f $repo, $hp, (__df_hooks_target)))
+        $warnings++
+      }
+      if ($tickv -eq 'off') {
+        $warnLines.Add("  ${repo}: tick is OFF (won't sync)   info -> dotfiles -config $repo.tick on")
+        # info, not a warning -> does NOT bump the warning count or exit code.
+      }
+
+      # --- ownership accounting ---
+      $lf = git --git-dir="$gd" --work-tree="$env:HOME" ls-files 2>$null
+      foreach ($path in @($lf | Where-Object { $_ -ne '' })) {
+        $totalPaths++
+        $owners.Add([pscustomobject]@{ Path = $path; Repo = $repo })
+      }
+    }
+  }
+
+  # --- overlap pass (THE big one): any path owned by >1 repo is an ERROR. -------------
+  $overlaps = $owners | Group-Object Path | Where-Object {
+    ($_.Group | Select-Object -ExpandProperty Repo -Unique).Count -gt 1
+  }
+  $ownLine = 'ownership: '
+  if ($overlaps) {
+    Write-Output ($ownLine + 'OVERLAP')
+    foreach ($o in $overlaps) {
+      $repos = ($o.Group | Select-Object -ExpandProperty Repo -Unique | Sort-Object)
+      $reposStr = ($repos -join ', ')
+      $wrong = $repos[1]   # release the SECOND owner, per plan G
+      Write-Output ("  {0}   tracked by: {1}" -f $o.Name, $reposStr)
+      Write-Output ("    fix -> dotfiles {0} rm --cached {1}" -f $wrong, $o.Name)
+      $errors++
+    }
+  } else {
+    Write-Output ($ownLine + ("{0} paths across {1} repos, no overlaps" -f $totalPaths, $repoCount))
+  }
+
+  # --- warnings / info block ---------------------------------------------------------
+  if ($warnLines.Count -gt 0) {
+    Write-Output 'warnings:'
+    foreach ($l in $warnLines) { Write-Output $l }
+  }
+
+  # --- final summary + exit code -----------------------------------------------------
+  if ($errors -eq 0) {
+    Write-Output 'all checks passed'
+    $global:LASTEXITCODE = 0
+  } else {
+    Write-Output ("{0} error(s), {1} warning(s)" -f $errors, $warnings)
+    $global:LASTEXITCODE = 1
+  }
+}
 
 # -show: print each repo's recorded conflicts (state/<repo>/conflicts.log), or "(no conflicts)".
 function __df_show {

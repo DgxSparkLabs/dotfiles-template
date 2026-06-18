@@ -78,18 +78,42 @@ Branch: `feat/sync-multi-repo-engine`. Build order = the plan's "Build order —
   can't key `<repo>.tick` — schema constraint, not a Node 6 bug; the routing/discovery/passthrough
   half of L5.17 fully passes).
 
+- **Node 7 (-doctor)** — replaced the exit-3 stub in BOTH dispatchers (behavior-identical).
+  Output per plan "F. Expected command outputs" / "G. Doctor — error cases": an `engine:` line
+  (branch + up-to-date / N-behind / no-upstream / NOT-a-git-repo), a `repos:` block (per repo:
+  name, branch|detached|none, upstream|(none), tick on/off, add tracked/all, hooks wired/MISSING),
+  an `ownership:` overlap check, a `warnings:` block (each line carries a `fix ->` / `info ->`),
+  and a final summary (`all checks passed` or `K error(s), W warning(s)`). Checks + fixes:
+  (1) **overlap** = a path in >1 repo's `git ls-files` -> ERROR + path + both owners +
+  `dotfiles <2nd-owner> rm --cached <path>` (the load-bearing exclusive-ownership invariant);
+  (2) no upstream -> `push -u origin <branch>`; (3) detached/none HEAD -> `checkout <branch>`;
+  (4) core.hooksPath unset -> `config core.hooksPath ...`; (5) hooksPath set but target dir
+  MISSING (L5.6 / L5.25 partial migration) -> re-point at the engine githooks dir; (6) tick OFF
+  -> INFO (`-config <repo>.tick on`); (7) tick ON + hooksPath unset (L5.24) -> louder warn;
+  (8) engine behind upstream (L0.19, via `git -C <common> rev-list --count HEAD..@{u}`) ->
+  `dotfiles --update`; (9) engine dir not a git repo (L5.26) -> ERROR. Exit code is nonzero ONLY
+  when an ERROR exists (overlap, corrupt/non-git repo under bare-repos/, engine-not-git);
+  warnings/info -> exit 0. A corrupt/non-git dir under bare-repos/ is noted + counted as ERROR.
+  Helper added: `__df_hooks_target` (= `$DOTFILES_COMMON/githooks`). DISPATCHER CHANGE (both
+  shells): `DOTFILES_COMMON` is now overridable via the env (`$env:DOTFILES_COMMON` / exported)
+  so the engine-behind / engine-not-git tests can point it at a fake engine in a child process;
+  the zsh re-exec now forwards `DOTFILES_COMMON` too. New tests `tests/test_doctor.{sh,ps1}`
+  (L0.13-L0.19, L5.6, L5.24, L5.25, L5.26). Local: bash full 174/174 +1 SKIP, pwsh full 171/171
+  +1 SKIP, 0 FAIL (doctor file = 43/43 each). The SKIP is the pre-existing `L5.17-autotick`.
+
 ## CI status
-- Node 6 NOT YET pushed/CI-verified (orchestrator pushes + verifies). Prior:
+- Node 7 NOT YET pushed/CI-verified (orchestrator pushes + verifies). Prior:
+- Node 6 CI-VERIFIED GREEN: run 27789885880, ubuntu+macos+windows ALL success (commit bd5b431). Prior:
 - Node 5 CI-verified GREEN (run 27787968200, ubuntu+macos+windows). Prior:
 - Branch pushed; `unit` workflow GREEN on ubuntu + macos + windows (run 27781322623).
   bash (linux/mac/win-gitbash), zsh (macos), pwsh (all) all pass. The CI loop is proven.
 - (Benign annotation: actions/checkout@v4 Node20 deprecation — bump to @v5 sometime.)
 
 ## Next
-- **Node 7** `-doctor`: ls-files intersection across repos (overlap=error), no-upstream / detached
-  / hooksPath-unset / tick-off / engine-behind checks, each printing a fix (plan "G. Doctor").
-  L0.13-L0.19; L5.6/L5.24/L5.25/L5.26 doctor-detection cases. `-doctor` is still the exit-3 stub.
-- Then nodes 8 (hooks) → 9 (timer) → 10 (migration/bootstrap) → 11 (interop) → 12 (README).
+- **Node 8** hook runner per-repo dispatch: runner identifies the firing repo via
+  `git rev-parse --absolute-git-dir` -> basename, runs `hooks/_shared/<hook>` then
+  `hooks/<repo>/<hook>`. Gate L1.7-L1.10, L5.4-L5.6, L4.4 (sh.exe identity).
+- Then nodes 9 (timer) → 10 (migration/bootstrap) → 11 (interop) → 12 (README).
 
 ## How to run tests
 - bash: `bash tests/run.sh bash`  (zsh: `zsh tests/run.sh zsh`)

@@ -10,7 +10,11 @@
 # Override DOTFILES_ROOT to point at a different ~/.dotfiles (the test harness does this).
 
 # Engine dir = where THIS script lives (…/.dotfiles/common). Robust under symlinks and tests.
-if [ -n "${BASH_SOURCE:-}" ]; then
+# DOTFILES_COMMON can be overridden via the env (tests point it at a fake engine for the
+# engine-behind / engine-not-a-git-repo doctor cases).
+if [ -n "${DOTFILES_COMMON:-}" ]; then
+  :
+elif [ -n "${BASH_SOURCE:-}" ]; then
   DOTFILES_COMMON="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 else
   DOTFILES_COMMON="$(cd "$(dirname "$0")" && pwd)"
@@ -516,8 +520,200 @@ __df_tick() {
   return "$rc"
 }
 
-# --- Heavy verbs: -doctor stubbed (node 7); -show/-resolve implemented (node 5). ---
-__df_doctor()  { printf 'dotfiles -doctor: not implemented yet (build node 7)\n' >&2; return 3; }
+# --- Node 7: -doctor — health + the load-bearing exclusive-ownership invariant. -------
+# Prints an engine line, a per-repo status line, an ownership (overlap) check, and a
+# warnings/info block. EVERY problem prints an ACTIONABLE fix line. Exit policy: nonzero
+# ONLY when at least one ERROR exists (a path tracked by >1 repo, or a corrupt/non-git repo
+# under bare-repos/). Warnings (no upstream / detached HEAD / hooksPath unset/missing) and
+# info (tick off) do NOT fail the exit code. See plan "F. Expected command outputs" and
+# "G. Doctor — error cases".
+#
+# The shared hooks dir every repo's core.hooksPath should point at.
+__df_hooks_target() { printf '%s/githooks' "$DOTFILES_COMMON"; }
+
+__df_doctor() {
+  emulate -L sh 2>/dev/null || true
+  local errors=0 warnings=0
+  # Collected lines, emitted after the per-repo block so the layout matches plan F/G.
+  local warn_lines="" overlap_lines="" ownership_summary=""
+
+  # --- engine line -------------------------------------------------------------------
+  local ecommon="$DOTFILES_COMMON"
+  if git --git-dir="$ecommon/.git" rev-parse --git-dir >/dev/null 2>&1; then
+    local ebranch eupstream behind
+    ebranch="$(git -C "$ecommon" symbolic-ref --short -q HEAD 2>/dev/null)"
+    [ -n "$ebranch" ] || ebranch="(detached)"
+    if eupstream="$(git -C "$ecommon" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)" && [ -n "$eupstream" ]; then
+      behind="$(git -C "$ecommon" rev-list --count "HEAD..@{u}" 2>/dev/null)"
+      if [ -n "$behind" ] && [ "$behind" -gt 0 ] 2>/dev/null; then
+        printf 'engine:  %s  branch %s, %s commit(s) behind %s\n' "$ecommon" "$ebranch" "$behind" "$eupstream"
+        warn_lines="${warn_lines}  engine: behind upstream by $behind commit(s)   fix -> dotfiles --update
+"
+        warnings=$((warnings+1))
+      else
+        printf 'engine:  %s  branch %s, up to date\n' "$ecommon" "$ebranch"
+      fi
+    else
+      printf 'engine:  %s  branch %s (no upstream)\n' "$ecommon" "$ebranch"
+    fi
+  else
+    # L5.26: the engine dir exists but is NOT a git repo -> `dotfiles --update` would fail. ERROR.
+    printf 'engine:  %s  NOT a git repo\n' "$ecommon"
+    warn_lines="${warn_lines}  engine: $ecommon is not a git repo (dotfiles --update would fail)   fix -> re-clone the engine into it
+"
+    errors=$((errors+1))
+  fi
+
+  # --- per-repo block + overlap accounting -------------------------------------------
+  local base; base="$(__df_repos_dir)"
+  printf 'repos:\n'
+  # Accumulate "path\trepo" pairs across all repos for the overlap pass.
+  local owners="" total_paths=0 repo_count=0
+  if [ -d "$base" ]; then
+    local d repo gd
+    for d in "$base"/*/; do
+      [ -d "$d" ] || continue
+      repo="$(basename "$d")"
+      gd="$d"
+      if ! __df_is_repo "$gd"; then
+        # A stray / corrupt dir under bare-repos/ -> note + ERROR (it can't be ticked).
+        printf '  %-8s NOT a git repo (skipped)\n' "$repo"
+        warn_lines="${warn_lines}  $repo: not a git repo under bare-repos/   fix -> remove $d or restore the repo
+"
+        errors=$((errors+1))
+        continue
+      fi
+      repo_count=$((repo_count+1))
+
+      # branch / upstream
+      local branch upstream tickv addv hooks hp
+      branch="$(git --git-dir="$gd" symbolic-ref --short -q HEAD 2>/dev/null)"
+      if [ -z "$branch" ]; then
+        # Distinguish detached HEAD (a commit) from a truly unborn/missing HEAD.
+        if git --git-dir="$gd" rev-parse --verify -q HEAD >/dev/null 2>&1; then
+          branch="detached"
+        else
+          branch="none"
+        fi
+      fi
+      if upstream="$(git --git-dir="$gd" --work-tree="$HOME" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)" && [ -n "$upstream" ]; then
+        :
+      else
+        upstream="(none)"
+      fi
+
+      # settings
+      if [ "$(__df_setting_tick "$repo" 2>/dev/null)" = true ]; then tickv="on"; else tickv="off"; fi
+      if [ "$(__df_setting_add "$repo" 2>/dev/null)" = "-A" ]; then addv="all"; else addv="tracked"; fi
+
+      # hooks: core.hooksPath set AND its target dir exists -> wired; else MISSING.
+      hp="$(git --git-dir="$gd" config --get core.hooksPath 2>/dev/null)"
+      if [ -n "$hp" ] && [ -d "$hp" ]; then
+        hooks="wired"
+      else
+        hooks="MISSING"
+      fi
+
+      printf '  %-8s branch %-8s upstream %-16s tick:%-3s add:%-7s hooks:%s\n' \
+        "$repo" "$branch" "$upstream" "$tickv" "$addv" "$hooks"
+
+      # --- warnings / info per repo (each with a fix) ---
+      if [ "$upstream" = "(none)" ] && [ "$branch" != "detached" ] && [ "$branch" != "none" ]; then
+        warn_lines="${warn_lines}  $repo: no upstream for '$branch'   fix -> dotfiles $repo push -u origin $branch
+"
+        warnings=$((warnings+1))
+      fi
+      if [ "$branch" = "detached" ]; then
+        warn_lines="${warn_lines}  $repo: detached HEAD (no branch)   fix -> dotfiles $repo checkout <branch>
+"
+        warnings=$((warnings+1))
+      elif [ "$branch" = "none" ]; then
+        warn_lines="${warn_lines}  $repo: no HEAD branch   fix -> dotfiles $repo checkout <branch>
+"
+        warnings=$((warnings+1))
+      fi
+      if [ -z "$hp" ]; then
+        warn_lines="${warn_lines}  $repo: core.hooksPath not set   fix -> dotfiles $repo config core.hooksPath \"\$HOME/.dotfiles/common/githooks\"
+"
+        warnings=$((warnings+1))
+        # L5.24: tick is ON but hooks are not wired -> a louder note (auto-commits run no hooks).
+        if [ "$tickv" = "on" ]; then
+          warn_lines="${warn_lines}  $repo: tick is ON but core.hooksPath is unset (auto-commits run no hooks)   fix -> dotfiles $repo config core.hooksPath \"\$HOME/.dotfiles/common/githooks\"
+"
+          warnings=$((warnings+1))
+        fi
+      elif [ ! -d "$hp" ]; then
+        # L5.6 / L5.25: hooksPath set but the target dir is missing (partial migration / wrong path).
+        warn_lines="${warn_lines}  $repo: core.hooksPath set to '$hp' but that dir is missing   fix -> dotfiles $repo config core.hooksPath \"$(__df_hooks_target)\"
+"
+        warnings=$((warnings+1))
+      fi
+      if [ "$tickv" = "off" ]; then
+        warn_lines="${warn_lines}  $repo: tick is OFF (won't sync)   info -> dotfiles -config $repo.tick on
+"
+        # info, not a warning -> does NOT bump the warning count or exit code.
+      fi
+
+      # --- ownership accounting: record every tracked path -> repo ---
+      local lf path
+      lf="$(git --git-dir="$gd" --work-tree="$HOME" ls-files 2>/dev/null)"
+      while IFS= read -r path; do
+        [ -n "$path" ] || continue
+        total_paths=$((total_paths+1))
+        owners="${owners}${path}	${repo}
+"
+      done <<__DF_LSFILES__
+$lf
+__DF_LSFILES__
+    done
+  fi
+
+  # --- overlap pass (THE big one): any path owned by >1 repo is an ERROR. -------------
+  # Group the path<TAB>repo lines by path; a path with >1 distinct repo overlaps.
+  local dup
+  dup="$(printf '%s' "$owners" | sort | awk -F'\t' '
+    NF>=2 {
+      if ($1==prev) { repos = repos ", " $2; n++ }
+      else {
+        if (n>1) print prev "\t" repos;
+        prev=$1; repos=$2; n=1
+      }
+    }
+    END { if (n>1) print prev "\t" repos }
+  ')"
+
+  printf 'ownership: '
+  if [ -n "$dup" ]; then
+    printf 'OVERLAP\n'
+    while IFS="	" read -r path repos; do
+      [ -n "$path" ] || continue
+      # The fix targets the SECOND owner listed (the one to release), per plan G.
+      local wrong
+      wrong="$(printf '%s' "$repos" | awk -F', ' '{print $2}')"
+      printf '  %s   tracked by: %s\n' "$path" "$repos"
+      printf '    fix -> dotfiles %s rm --cached %s\n' "$wrong" "$path"
+      errors=$((errors+1))
+    done <<__DF_DUP__
+$dup
+__DF_DUP__
+  else
+    printf '%d paths across %d repos, no overlaps\n' "$total_paths" "$repo_count"
+  fi
+
+  # --- warnings / info block ---------------------------------------------------------
+  if [ -n "$warn_lines" ]; then
+    printf 'warnings:\n'
+    printf '%s' "$warn_lines"
+  fi
+
+  # --- final summary + exit code -----------------------------------------------------
+  if [ "$errors" -eq 0 ]; then
+    printf 'all checks passed\n'
+    return 0
+  fi
+  printf '%d error(s), %d warning(s)\n' "$errors" "$warnings"
+  return 1
+}
 
 # -show: print each repo's recorded conflicts (state/<repo>/conflicts.log), or "(no conflicts)".
 # Greppable: one "<repo>:\t<logline>" per clash. LOCAL state only.
@@ -628,7 +824,7 @@ dotfiles() {
       case "$verb" in
         tick|show|resolve|doctor)
           if [ -z "${BASH_VERSION:-}" ]; then
-            DOTFILES_ROOT="$DOTFILES_ROOT" bash "$DOTFILES_COMMON/dotfiles.sh" "$tok" "$@"
+            DOTFILES_ROOT="$DOTFILES_ROOT" DOTFILES_COMMON="$DOTFILES_COMMON" bash "$DOTFILES_COMMON/dotfiles.sh" "$tok" "$@"
             return $?
           fi
           ;;
