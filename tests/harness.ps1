@@ -29,6 +29,32 @@ function New-Env {
 }
 function Mk-Repo($n) { git init --bare -q (Join-Path (Join-Path $env:DOTFILES_ROOT 'bare-repos') $n) }
 
+# Mk-RepoWithOrigin <name> [branch]
+#   Build a repo wired to a fake "origin" bare repo on local disk, with an upstream-tracking
+#   branch and one initial commit seeding a repo-OWNED file ($HOME/.config/<name>/seed).
+#   Used by node 4 (tick) and node 5 (merge).
+function Mk-RepoWithOrigin($name, $branch = 'main') {
+  $origin = Join-Path (Join-Path $global:WORK 'origins') "$name.git"
+  $gd = Join-Path (Join-Path $env:DOTFILES_ROOT 'bare-repos') $name
+  $seed = ".config/$name/seed"
+  New-Item -ItemType Directory -Force -Path (Join-Path $global:WORK 'origins') | Out-Null
+  git init --bare -q $origin
+  git init --bare -q $gd
+  git --git-dir="$gd" --work-tree="$env:HOME" symbolic-ref HEAD "refs/heads/$branch"
+  git --git-dir="$gd" remote add origin $origin
+  New-Item -ItemType Directory -Force -Path (Join-Path $env:HOME ".config/$name") | Out-Null
+  Set-Content -LiteralPath (Join-Path $env:HOME $seed) -Value "seed`n" -NoNewline
+  git --git-dir="$gd" --work-tree="$env:HOME" add -- $seed
+  git --git-dir="$gd" --work-tree="$env:HOME" commit -q -m "$name`: seed"
+  git --git-dir="$gd" --work-tree="$env:HOME" push -q -u origin $branch 2>$null | Out-Null
+}
+
+function Origin-Dir($name) { Join-Path (Join-Path $global:WORK 'origins') "$name.git" }
+function Origin-Tip($name, $rev = 'HEAD') {
+  $o = Join-Path (Join-Path $global:WORK 'origins') "$name.git"
+  (git --git-dir="$o" rev-parse $rev 2>$null | Out-String).Trim()
+}
+
 # Invoke the dispatcher in a CHILD pwsh (via _invoke.ps1, -File) so arg boundaries — including
 # ZERO args — and real stderr + exit code are captured reliably.
 # Sets $global:LastOut, $global:LastErr, $global:LastRc.

@@ -26,3 +26,27 @@ new_env() {
   git config --global user.name  "t"               >/dev/null 2>&1 || true
 }
 mk_repo() { git init --bare -q "$DOTFILES_ROOT/bare-repos/$1"; }
+
+# mk_repo_with_origin <name> [branch]
+#   Build a repo wired to a fake "origin" bare repo on local disk, with an upstream-tracking
+#   branch and one initial commit that seeds a repo-OWNED file ($HOME/.config/<name>/seed).
+#   Layout:  $WORK/origins/<name>.git  (fake remote)  <-  bare-repos/<name>  ->  $HOME work-tree.
+#   POSIX/Git-Bash safe. Used by node 4 (tick) and node 5 (merge).
+mk_repo_with_origin() {
+  local name="$1" branch="${2:-main}"
+  local origin="$WORK/origins/$name.git" gd="$DOTFILES_ROOT/bare-repos/$name" seed=".config/$name/seed"
+  mkdir -p "$WORK/origins"
+  git init --bare -q "$origin"
+  git init --bare -q "$gd"
+  git --git-dir="$gd" --work-tree="$HOME" symbolic-ref HEAD "refs/heads/$branch"
+  git --git-dir="$gd" remote add origin "$origin"
+  mkdir -p "$HOME/.config/$name"
+  printf 'seed\n' > "$HOME/$seed"
+  git --git-dir="$gd" --work-tree="$HOME" add -- "$seed"
+  git --git-dir="$gd" --work-tree="$HOME" commit -q -m "$name: seed"
+  git --git-dir="$gd" --work-tree="$HOME" push -q -u origin "$branch"
+}
+
+# Resolve the fake-origin path / tip for assertions.
+origin_dir() { printf '%s/origins/%s.git' "$WORK" "$1"; }
+origin_tip() { git --git-dir="$WORK/origins/$1.git" rev-parse "${2:-HEAD}" 2>/dev/null; }

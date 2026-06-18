@@ -2,18 +2,24 @@
 
 Branch: feat/sync-multi-repo-engine
 
-## Last node DONE (CI-verified green)
-- **Node 3** — per-repo config + safe defaults. Commit `68a0b6e`. CI run 27781736502 =
-  success on ubuntu + macos + windows. Readers in both dispatchers: `__df_setting_tick`
-  (default OFF), `__df_setting_add` (default -u), `__df_setting_timer_interval` (default 60),
-  `__df_raw` (unset vs malformed). Tests: tests/test_config.{sh,ps1} (L0.8-L0.12, L5.8-L5.12).
+## Last node DONE (local green; CI not yet run for this node)
+- **Node 4** — generic tick, SINGLE-WRITER path. `__df_tick`/`__df_tick_one` in both
+  dispatchers (stub replaced). Gated by `__df_setting_tick` (default OFF). Stage scoped
+  via `__df_setting_add`: `-u` tracked, or `-A` scoped to the repo's OWN tracked dirs
+  (derived from `git ls-files` parent dirs) so it NEVER stages across $HOME / sibling repos.
+  Commit only if staged; push only if upstream exists (else log+skip, never fail).
+  `-tick` (no arg) loops `bare-repos/*` with fail-isolation; `-tick <repo>` ticks one.
+  Harness: `mk_repo_with_origin`/`Mk-RepoWithOrigin` + `origin_dir`/`origin_tip` helpers.
+  Tests: tests/test_tick.{sh,ps1} (L1.1-L1.6, L2.1). Local: bash 13/13 + full suite 46/46,
+  pwsh 13/13 + full suite 43/43. No SKIPs.
+- Dispatcher fix (PS): `[object[]] $rest = if (...)` — a one-element slice was unrolling to a
+  scalar string and `@rest` exploded it char-by-char (recorded in PITFALLS).
 
 ## Next node (UNBLOCKED)
-- **Node 4** — generic tick, single-writer path: `add <flag> -- <owned paths>` → commit →
-  push, gated by `__df_setting_tick` (skip if OFF), flag from `__df_setting_add`. Reuse the
-  commit-message builder from timer/dotfiles-timer.sh if practical. Gate tests: L1.1-L1.6,
-  L2.1, L1.3 (tick-off safety). Needs a fake-origin + fake-machine helper in the harness so a
-  repo has an upstream to push to (extend harness.sh/.ps1: `mk_repo_with_origin`).
+- **Node 5** — never-block merge + surfaced resolution. Insert fetch→merge (newest-wins by
+  committer-date, loser pinned to refs/sync-losers/* + state/<repo>/conflicts.log) plus a
+  modify/delete tree-conflict fallback BETWEEN commit and push inside `__df_tick_one`; then
+  implement `-show`/`-resolve` (currently exit-3 stubs). Gate: L2.2-L2.13, L5.* merge cases.
 
 ## Do NOT
-- re-run a completed node; push to master; weaken tests; fork a second attempt at node 4.
+- re-run a completed node; push to master; weaken tests; `git add -A` unscoped across $HOME.
