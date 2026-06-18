@@ -19,6 +19,15 @@ elif [ -n "${BASH_SOURCE:-}" ]; then
 else
   DOTFILES_COMMON="$(cd "$(dirname "$0")" && pwd)"
 fi
+# DOTFILES_SELF = absolute path to THIS script file (the REAL dispatcher), computed from the
+# script's own location and NEVER from DOTFILES_COMMON (which is env-overridable so the doctor
+# engine tests can point it at a FAKE engine dir). The zsh->bash heavy-verb re-exec MUST run
+# THIS file, not "$DOTFILES_COMMON/dotfiles.sh" — when a test overrides DOTFILES_COMMON to a
+# fake dir with no dotfiles.sh, the latter re-exec dies with rc 127 / "No such file or directory".
+# Under bash, $BASH_SOURCE[0] is this file; under a sourced zsh shell, $0 is the sourced file.
+# Do NOT let the env override DOTFILES_SELF.
+if [ -n "${BASH_SOURCE:-}" ]; then _df_self="${BASH_SOURCE[0]}"; else _df_self="$0"; fi
+DOTFILES_SELF="$(cd "$(dirname "$_df_self")" && pwd)/$(basename "$_df_self")"
 # Root holding bare-repos/, config, hooks/, state/ = parent of common/ by default.
 DOTFILES_ROOT="${DOTFILES_ROOT:-$(dirname "$DOTFILES_COMMON")}"
 
@@ -816,15 +825,21 @@ dotfiles() {
       # loops — kept below as good hygiene) but the macOS zsh CI leg kept failing the merge
       # tests with "fatal: Needed a single revision" / "Not a valid object name". Rather than
       # chase every divergence, run these verbs under ONE shell: if we're NOT in bash, re-exec
-      # the whole command via `bash dotfiles.sh <tok> <args>`. The bottom-of-file guard then
-      # re-enters dotfiles() UNDER bash (BASH_VERSION set there), where this same `[ -z
-      # "${BASH_VERSION:-}" ]` test is FALSE — so the child runs the real body and never
-      # re-execs again (no recursion). DOTFILES_ROOT is passed through the env so the child
-      # resolves the same root; HOME is already inherited. Lightweight verbs are unaffected.
+      # the whole command via `bash "$DOTFILES_SELF" <tok> <args>`. CRITICAL: re-exec the REAL
+      # script path (DOTFILES_SELF, computed at load from this file's own location), NOT
+      # "$DOTFILES_COMMON/dotfiles.sh" — DOTFILES_COMMON is env-overridable so the doctor engine
+      # tests (L0.19 engine-behind, L5.26 engine-not-git) can point it at a FAKE engine dir with
+      # no dotfiles.sh; re-execing that path dies with rc 127 / "No such file or directory" on the
+      # zsh leg (ubuntu runs bash directly, pwsh runs natively — neither re-execs). The
+      # bottom-of-file guard then re-enters dotfiles() UNDER bash (BASH_VERSION set there), where
+      # this same `[ -z "${BASH_VERSION:-}" ]` test is FALSE — so the child runs the real body and
+      # never re-execs again (no recursion). DOTFILES_ROOT and DOTFILES_COMMON are forwarded
+      # through the env so the bash child resolves the same root AND still inspects the (possibly
+      # fake) engine dir the test set; HOME is already inherited. Lightweight verbs are unaffected.
       case "$verb" in
         tick|show|resolve|doctor)
           if [ -z "${BASH_VERSION:-}" ]; then
-            DOTFILES_ROOT="$DOTFILES_ROOT" DOTFILES_COMMON="$DOTFILES_COMMON" bash "$DOTFILES_COMMON/dotfiles.sh" "$tok" "$@"
+            DOTFILES_ROOT="$DOTFILES_ROOT" DOTFILES_COMMON="$DOTFILES_COMMON" bash "$DOTFILES_SELF" "$tok" "$@"
             return $?
           fi
           ;;

@@ -175,8 +175,10 @@ Traps hit during implementation. Read before editing the dispatcher/harness.
   per-construct fixes unreliable (two attempts — `emulate -L sh`, while-read loops — did NOT clear
   the macOS zsh merge failures, and zsh can't be reproduced on the Windows host), so
   tick/show/resolve/doctor now delegate to bash: when the dispatcher is sourced into a non-bash
-  shell (`[ -z "${BASH_VERSION:-}" ]`), `dotfiles()` re-execs `bash "$DOTFILES_COMMON/dotfiles.sh"
-  "$tok" "$@"` (DOTFILES_ROOT passed through the env, HOME inherited) and returns its status. The
+  shell (`[ -z "${BASH_VERSION:-}" ]`), `dotfiles()` re-execs `bash "$DOTFILES_SELF" "$tok" "$@"`
+  (DOTFILES_ROOT + DOTFILES_COMMON passed through the env, HOME inherited) and returns its status.
+  [SUPERSEDED detail: this originally re-exec'd `"$DOTFILES_COMMON/dotfiles.sh"`; see the next
+  entry for why that broke the doctor engine tests and why DOTFILES_SELF is the fix.] The
   bottom-of-file guard re-enters `dotfiles()` UNDER bash where `BASH_VERSION` is set, so the same
   `[ -z ... ]` test is false in the child -> real body runs once, NO recursion. Lightweight verbs
   (passthrough/-ls/-config/-help/-update/-timer) stay in-shell. The prior `emulate -L sh` /
@@ -184,3 +186,21 @@ Traps hit during implementation. Read before editing the dispatcher/harness.
   `$0` under non-bash (BASH_SOURCE is unset there); zsh sets `$0` to the sourced file (works), but
   dash sets `$0` to `dash` (the re-exec then can't find the script unless cwd is the common dir) —
   irrelevant to the macOS zsh target, but don't "fix" the re-exec by reasoning from a dash repro.
+- **zsh->bash re-exec must use the REAL script path (DOTFILES_SELF), not
+  `$DOTFILES_COMMON/dotfiles.sh` — DOTFILES_COMMON is env-overridable for doctor engine
+  inspection.** The macOS zsh leg re-execs heavy verbs under bash. The re-exec originally ran
+  `bash "$DOTFILES_COMMON/dotfiles.sh"`, but the doctor engine tests (L0.19 engine-behind, L5.26
+  engine-not-git) override `DOTFILES_COMMON` to a FAKE engine dir that has NO dotfiles.sh — so
+  the zsh re-exec died with `rc 127` + `bash: <tmp>/fakeengine/dotfiles.sh: No such file or
+  directory` (ubuntu runs bash directly and pwsh runs natively, so neither re-execs -> both
+  stayed green; only the zsh leg failed). FIX: compute `DOTFILES_SELF` at load from THIS file's
+  own location (`${BASH_SOURCE[0]}` under bash, `$0` under a sourced zsh shell) independent of
+  (and never overridden by) `DOTFILES_COMMON`, and re-exec `bash "$DOTFILES_SELF" "$tok" "$@"`
+  while still FORWARDING `DOTFILES_COMMON`/`DOTFILES_ROOT` through the env so the bash child's
+  doctor inspects the same (fake) engine the test set. In normal operation DOTFILES_SELF's dir ==
+  DOTFILES_COMMON, so behavior is unchanged; the split only matters when DOTFILES_COMMON is
+  overridden. No recursion: the bottom-of-file guard re-enters `dotfiles()` under bash where
+  `BASH_VERSION` is set, so the `[ -z "${BASH_VERSION:-}" ]` re-exec test is false -> body runs
+  once. (Verified locally with a `dash -c '. "$0"' "$REPO/dotfiles.sh"` repro forcing `$0` to the
+  real script with DOTFILES_COMMON -> fake dir: doctor inspected the fake engine and returned the
+  right rc, NOT 127.)
