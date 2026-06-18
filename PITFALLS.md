@@ -186,6 +186,37 @@ Traps hit during implementation. Read before editing the dispatcher/harness.
   `$0` under non-bash (BASH_SOURCE is unset there); zsh sets `$0` to the sourced file (works), but
   dash sets `$0` to `dash` (the re-exec then can't find the script unless cwd is the common dir) —
   irrelevant to the macOS zsh target, but don't "fix" the re-exec by reasoning from a dash repro.
+- **Per-repo hook scripts MUST be LF + `#!/bin/sh` shebang + executable bit on POSIX** (node 8).
+  Linux/macOS git SILENTLY SKIPS a non-executable hook (no error, just doesn't run) — so the
+  runner mirrors that: `_is_runnable` checks `os.access(path, X_OK)` on POSIX and SKIPS if unset.
+  On Windows there is NO reliable executable bit, so the runner treats any present hook file as
+  runnable and invokes it via `sh` (the same sh.exe the stub runs under). Consequence for tests:
+  L5.4b (non-exec hook silently skipped) is a POSIX-only guarantee — it's a NAMED SKIP on Windows
+  (the OS can't express the precondition), and runs for real on the ubuntu/macos bash legs. The
+  harness `write_hook`/`Write-Hook` prepend `#!/bin/sh`, write LF only (`WriteAllText` in PS, no
+  CRLF/BOM), and `chmod +x` on POSIX.
+- **The runner derives the dotfiles root as git-dir/../.., NOT from any env var** (node 8). Git
+  exposes the firing repo via the hook environment; `git rev-parse --absolute-git-dir` inside the
+  hook returns the ABSOLUTE bare git-dir even when GIT_DIR is relative or cwd is the work-tree.
+  Since the git-dir is `<root>/bare-repos/<repo>`, root = its parent's parent and repo = its
+  basename. This is independent of `DOTFILES_ROOT` (which the dotfiles dispatcher uses) — hooks
+  run under plain git with no dispatcher env, so the runner must NOT rely on `DOTFILES_ROOT`.
+  In tests, `DOTFILES_ROOT` happens to BE that root (bare-repos live under it), so hooks land at
+  `$DOTFILES_ROOT/hooks/<scope>/<hook>` and the two agree. Verified on the Windows host: the
+  in-hook `git rev-parse --absolute-git-dir` returns e.g.
+  `C:/.../root/bare-repos/nvim`, basename `nvim`, root `.../root`.
+- **Hook tests fire REAL git commits, not the dotfiles dispatcher** (node 8). To exercise the
+  runner exactly as git invokes it (incl. the Git-for-Windows sh.exe leg for L1.10/L4.4), the
+  tests set a bare repo's `core.hooksPath` to the engine's real `githooks/` and run
+  `git --git-dir=<bare> --work-tree=$HOME commit`. Hooks inherit the test process's environment,
+  so marker output paths are passed via exported `$env:*` / `export` BEFORE the commit (the hook
+  body reads `$DF_MARK` etc.). The `uv run` first invocation builds the runner venv — `unit.yml`
+  pre-runs `uv sync --locked --project githooks-runner` so the first hook commit doesn't race it.
+- **A non-zero per-repo hook exit must propagate as the runner's exit code to BLOCK the git op**
+  (node 8). cli.py returns the per-repo dispatch rc when the default-hook rc is 0; the first
+  non-zero `_shared`/`<repo>` hook wins. But a FAILURE TO IDENTIFY the repo, or any dispatch
+  exception, returns 0 (success) — never crash an unrelated git operation just because the
+  hooks tree or git-dir resolution is weird.
 - **zsh->bash re-exec must use the REAL script path (DOTFILES_SELF), not
   `$DOTFILES_COMMON/dotfiles.sh` — DOTFILES_COMMON is env-overridable for doctor engine
   inspection.** The macOS zsh leg re-execs heavy verbs under bash. The re-exec originally ran

@@ -160,6 +160,57 @@ function Plant-LiveLock($name) {
 }
 function Has-TickLock($name) { Test-Path -LiteralPath (Join-Path (Bare-Dir $name) 'dotfiles-tick.lock') }
 
+# --- Node 8 per-repo hook dispatch helpers --------------------------------------------
+# $global:RepoUnderTest = the engine repo (this checkout); its real githooks/ is the shared
+# stub set. Each test_*.ps1 sets it before using these.
+#
+# Wire-HooksPath <name> — point a bare repo's core.hooksPath at the engine's real githooks/.
+function Wire-HooksPath($name) {
+  git --git-dir="$(Bare-Dir $name)" config core.hooksPath "$global:RepoUnderTest/githooks"
+}
+
+# Write-Hook <repo|_shared> <hookname> <body> — install a per-repo (or _shared) hook script
+# under $DOTFILES_ROOT/hooks/<scope>/<hookname>. POSIX sh, LF endings, +x on Linux/macOS (git
+# silently skips a non-executable hook there). Body is the script AFTER the shebang; we prepend
+# `#!/bin/sh`. Always write LF (no CRLF) so sh.exe / sh can run it.
+function Write-Hook($scope, $hook, $body) {
+  $dir = Join-Path (Join-Path $env:DOTFILES_ROOT 'hooks') $scope
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  $path = Join-Path $dir $hook
+  $text = "#!/bin/sh`n" + ($body -replace "`r`n", "`n") + "`n"
+  [System.IO.File]::WriteAllText($path, $text)        # WriteAllText => no CRLF, no BOM
+  if ($IsLinux -or $IsMacOS) { chmod +x $path }
+}
+
+# Mk-RepoHookable <name> [branch] — a bare repo with a work-tree HEAD + git identity +
+# core.hooksPath wired to the engine stubs. No origin (hook tests don't push).
+function Mk-RepoHookable($name, $branch = 'main') {
+  $gd = Bare-Dir $name
+  git init --bare -q $gd
+  git --git-dir="$gd" --work-tree="$env:HOME" symbolic-ref HEAD "refs/heads/$branch"
+  git --git-dir="$gd" config user.email "t@example.test"
+  git --git-dir="$gd" config user.name  "t"
+  Wire-HooksPath $name
+}
+
+# Commit-In <repo> <relpath> <content> — stage+commit a work-tree file through the bare repo,
+# firing its hooks (core.hooksPath). Sets $global:LastRc to git's exit code (nonzero if a hook
+# blocked it). Hooks inherit this process's env, so set any marker-path $env:* before calling.
+function Commit-In($repo, $rel, $content) {
+  $gd = Bare-Dir $repo
+  $p = Join-Path $env:HOME $rel
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $p) | Out-Null
+  Set-Content -LiteralPath $p -Value "$content`n" -NoNewline
+  git --git-dir="$gd" --work-tree="$env:HOME" add -- $rel
+  git -C "$env:HOME" --git-dir="$gd" --work-tree="$env:HOME" commit -q -m "edit $rel" 2>$null
+  $global:LastRc = $LASTEXITCODE
+}
+
+# Tree-Names <repo> — newline-joined `git ls-tree -r --name-only HEAD` (empty if unborn).
+function Tree-Names($repo) {
+  (git --git-dir="$(Bare-Dir $repo)" ls-tree -r --name-only HEAD 2>$null | Out-String)
+}
+
 # Invoke the dispatcher in a CHILD pwsh (via _invoke.ps1, -File) so arg boundaries — including
 # ZERO args — and real stderr + exit code are captured reliably.
 # Sets $global:LastOut, $global:LastErr, $global:LastRc.

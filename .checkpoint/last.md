@@ -2,51 +2,48 @@
 
 Branch: feat/sync-multi-repo-engine
 
-## Last node DONE (CI-VERIFIED GREEN: run 27791782158, ubuntu+macos+windows ALL success)
-- Node-7 commits: d79aacd impl -> 94fd214 (FIX: zsh->bash re-exec must use DOTFILES_SELF, the real
-  script path, NOT $DOTFILES_COMMON/dotfiles.sh which is env-overridable for doctor engine checks).
-- **Node 7** — `-doctor` in BOTH dispatchers (behavior-identical), replacing the exit-3 stub.
-  Output per plan "F. Expected command outputs" / "G. Doctor — error cases":
-  - `engine:` line — branch + (up to date | N commit(s) behind <upstream> | no upstream |
-    NOT a git repo). Behind-detection: `git -C "$DOTFILES_COMMON" rev-list --count HEAD..@{u}`
-    guarded (no upstream -> skip silently).
-  - `repos:` block — per repo: name, branch | `detached` | `none`, upstream | `(none)`,
-    `tick:on/off`, `add:tracked/all`, `hooks:wired/MISSING`. Iterates discovered repos; a
-    corrupt/non-git dir under bare-repos/ is noted + counted as an ERROR.
-  - `ownership:` — overlap = a path in >1 repo's `git ls-files`. Clean -> "N paths across M
-    repos, no overlaps". Overlap -> "OVERLAP" + the path + "tracked by: <a>, <b>" + fix
-    `dotfiles <2nd-owner> rm --cached <path>` (THE load-bearing exclusive-ownership invariant).
-  - `warnings:` block — each line carries an actionable `fix ->` (or `info ->` for tick-off):
-    no upstream (L0.15 -> `push -u origin <branch>`), detached/none HEAD (L0.16 ->
-    `checkout <branch>`), hooksPath unset (L0.17 -> `config core.hooksPath ...`), hooksPath set
-    but target dir MISSING (L5.6 / L5.25 partial migration -> re-point at engine githooks),
-    tick off (L0.18 -> INFO `-config <repo>.tick on`), tick ON + hooksPath unset (L5.24 ->
-    louder warn), engine behind (L0.19 -> `dotfiles --update`), engine not a git repo (L5.26 ->
-    ERROR).
-  - Final summary: `all checks passed` (exit 0) OR `K error(s), W warning(s)` (exit 1).
-  - Exit code nonzero ONLY when at least one ERROR (overlap / corrupt-or-non-git repo /
-    engine-not-git). Warnings + info -> exit 0.
-- Helper added: `__df_hooks_target` (= `$DOTFILES_COMMON/githooks`), both shells.
-- DISPATCHER CHANGE (both shells, for testability): `DOTFILES_COMMON` is now env-overridable
-  (`$env:DOTFILES_COMMON` / exported); default still resolves from the script's own path. The zsh
-  heavy-verb re-exec forwards `DOTFILES_COMMON` through the env. PS doctor tests reset
-  `$env:DOTFILES_COMMON = $null` right after the engine-behind / engine-not-git Invoke-DF calls.
-- Tests: `tests/test_doctor.{sh,ps1}` — L0.13, L0.14, L0.15, L0.16, L0.17, L0.18, L0.19, L5.6,
-  L5.24, L5.25, L5.26. Each greppable banner tagged GOOD/BAD. Built the overlap fixture by
-  tracking the SAME path in two repos. Engine-behind fixture: a fake engine repo reset 1 commit
-  behind its origin/main, with DOTFILES_COMMON pointed at it for that test only.
-- Local results: `bash tests/run.sh bash` -> 174 PASS / 0 FAIL / 1 SKIP (doctor 43/43);
-  `pwsh tests/run.ps1` -> 171 PASS / 0 FAIL / 1 SKIP (doctor 43/43). The single SKIP is the
-  pre-existing `L5.17-autotick` (git-config forbids spaces in section names — not a node-7 issue).
+## Last node DONE LOCALLY (not yet pushed/CI-verified — orchestrator pushes + verifies)
+- **Node 8** — per-repo hook dispatch via runner repo-identity. Extended the Python runner
+  (`githooks-runner/dotfiles_githooks/`):
+  - NEW `dispatch.py`:
+    - `identify_repo()` -> `(repo_name, root)` via `git rev-parse --absolute-git-dir`
+      (basename = repo; root = git-dir/../.. since git-dir == `<root>/bare-repos/<repo>`).
+      Can't determine -> log warning + return None (caller returns 0, never crashes git).
+    - `dispatch_per_repo_hooks(hook, argv)` -> runs `<root>/hooks/_shared/<hook>` THEN
+      `<root>/hooks/<repo>/<hook>` if present + runnable; passes args + inherited stdin;
+      returns the FIRST non-zero rc (blocks the git op), else 0.
+    - `_is_runnable`: POSIX => must be executable (mirrors git silently skipping non-exec
+      hooks); Windows => any present file (no reliable exec bit).
+    - `_invoke`: POSIX => run script directly (shebang picks interpreter); Windows => via `sh`.
+  - `cli.py` wired: default hook handling FIRST (keeps `names.py` stdin-drain for STDIN hooks),
+    then `_dispatch` to per-repo hooks; unknown hook names still dispatch; dispatch exceptions
+    caught -> return 0.
+- Tests: NEW `tests/test_hooks.{sh,ps1}` (greppable GOOD/BAD banners) — fire REAL git commits
+  through `core.hooksPath` (not the dotfiles dispatcher), so the runner runs exactly as git
+  invokes it (Windows leg = Git-for-Windows sh.exe = L1.10/L4.4). Cases: L1.7, L1.8, L1.9,
+  L1.10, L5.4, L5.4b, L5.6, L5.block; L5.5 named-SKIP.
+- Harness: `wire_hooks`/`Wire-HooksPath`, `write_hook`/`Write-Hook` (LF + shebang + chmod +x on
+  POSIX), `mk_repo_hookable`/`Mk-RepoHookable`, `commit_in`/`Commit-In`, `Tree-Names`.
+- CI: `unit.yml` now installs uv (`astral-sh/setup-uv@v5`) + `uv sync --locked --project
+  githooks-runner` so the hook tests RUN on all 3 OS legs instead of failing-on-missing-uv.
+  `run.{sh,ps1}` auto-discover `test_hooks.*`, so no per-test wiring needed.
+- Local results: `bash tests/run.sh bash` -> 190 PASS / 0 FAIL / 3 SKIP (hooks 16/16);
+  `pwsh tests/run.ps1` -> 187 PASS / 0 FAIL / 3 SKIP (hooks 16/16). The 3 skips: L5.4b
+  (Windows: no executable bit — runs for real on ubuntu/macos), L5.5 (cannot safely unset uv
+  from PATH on the shared runner), and the pre-existing L5.17-autotick.
+- INFERRED identity assumption (L1.10/L4.4) verified locally on the Windows host: in-hook
+  `git rev-parse --absolute-git-dir` returns the absolute bare git-dir; basename == repo name.
+  Orchestrator's CI confirms macOS bash+zsh AND the Windows sh.exe leg.
 
 ## Next node (UNBLOCKED)
-- **Node 8** — hook runner per-repo dispatch. The runner under `githooks-runner/` identifies the
-  firing repo via `git rev-parse --absolute-git-dir` -> basename, then runs
-  `~/.dotfiles/hooks/_shared/<hook>` then `~/.dotfiles/hooks/<repo>/<hook>`. Gate L1.7-L1.10
-  (per-repo hook fires, isolation, _shared for all, identity), L5.4-L5.6 (missing dirs / uv),
-  L4.4 (sh.exe identity under Git-for-Windows).
+- **Node 9** — timer payload swap + multi-repo + jitter. The single installed OS unit/task/loop
+  (keep all backends + their singleton names) gets its payload swapped to `dotfiles -tick`
+  (loops `bare-repos/*`). Add `[timer] interval` (default 60) + `jitter` (±0-15s). Gate L3.*
+  (install/enable/status/logs/uninstall singleton, fire-calls-tick, one-timer-many-repos,
+  reboot/logon survival, Linux baked PATH, Windows non-admin VBS loop, jitter present).
 
 ## Do NOT
 - re-run a completed node; push to master; weaken tests; `git add -A` unscoped across $HOME;
-  push refs/sync-losers/* or state/*/conflicts.log to any synced branch (LOCAL only);
-  tighten -doctor to fail on warnings (exit nonzero is ERROR-only); hardcode `<dir>/MERGE_HEAD`.
+  make the runner depend on DOTFILES_ROOT (hooks run under plain git, no dispatcher env —
+  derive root from git-dir/../..); ship a per-repo hook test script with CRLF or no shebang;
+  treat a repo-identity failure as a hard error (return 0, never crash the user's git op).

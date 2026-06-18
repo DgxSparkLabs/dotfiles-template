@@ -101,8 +101,41 @@ Branch: `feat/sync-multi-repo-engine`. Build order = the plan's "Build order —
   (L0.13-L0.19, L5.6, L5.24, L5.25, L5.26). Local: bash full 174/174 +1 SKIP, pwsh full 171/171
   +1 SKIP, 0 FAIL (doctor file = 43/43 each). The SKIP is the pre-existing `L5.17-autotick`.
 
+- **Node 8 (per-repo hook dispatch)** — extended the Python runner (`dotfiles_githooks`) with a
+  new `dispatch.py`, wired into `cli.py` AFTER the existing default hook handling (which still
+  drains stdin for STDIN hooks via `names.py`). Flow: a bare repo's `core.hooksPath` ->
+  engine `githooks/<hook>` stub -> `uv run ... -m dotfiles_githooks <hook>` -> runner.
+  `identify_repo()` runs `git rev-parse --absolute-git-dir` (git sets the firing repo's git-dir
+  in the hook env, resolved robustly regardless of cwd), takes its **basename** as the repo name,
+  and derives the dotfiles **root = git-dir/../..** (git-dir lives at `<root>/bare-repos/<repo>`).
+  `dispatch_per_repo_hooks()` then runs, if present AND runnable, **`<root>/hooks/_shared/<hook>`
+  first, then `<root>/hooks/<repo>/<hook>`**, passing through the original args + inherited stdin;
+  the FIRST non-zero per-repo hook exit is returned (so a pre-commit hook BLOCKS the commit).
+  Robustness: if the repo can't be identified -> warn to stderr + return 0 (never crash an
+  unrelated git op); any dispatch exception is caught + returns 0. Cross-platform invocation:
+  on POSIX run the script directly (its `#!/bin/sh` shebang picks the interpreter) and SKIP a
+  non-executable hook exactly as git does; on Windows (no reliable exec bit) run any present hook
+  via `sh` (the same sh.exe the stub runs under). New tests `tests/test_hooks.{sh,ps1}` fire REAL
+  git commits (not the dispatcher) so the runner is exercised exactly as git invokes it — L1.7
+  (per-repo fires), L1.8 (isolation: nvim hook doesn't run on a machine commit), L1.9 (_shared
+  fires for both repos), L1.10/L4.4 (identity basename == firing repo, incl. the Git-for-Windows
+  sh.exe leg), L5.4 (missing hooks/ dirs -> commit succeeds, no crash), L5.4b (non-exec hook
+  silently skipped — POSIX-only; SKIP on Windows), L5.6 (hooksPath -> missing dir -> git runs no
+  hooks, commit still works), L5.block (non-zero hook blocks the commit). L5.5 (uv-missing) is a
+  NAMED SKIP. Harness gained `wire_hooks`/`Wire-HooksPath`, `write_hook`/`Write-Hook` (LF + +x on
+  POSIX), `mk_repo_hookable`/`Mk-RepoHookable`, `commit_in`/`Commit-In`, `Tree-Names`. `unit.yml`
+  now installs uv + `uv sync --locked --project githooks-runner` so the hook tests RUN on all 3
+  OS legs (not skip). Local: bash full 190/190 +3 SKIP, pwsh full 187/187 +3 SKIP, 0 FAIL
+  (hooks file 16/16 each). The two NEW skips are L5.4b (Windows: no exec bit) + L5.5 (uv-unset);
+  plus the pre-existing L5.17-autotick. Verified the INFERRED identity assumption locally on the
+  Windows host (`git rev-parse --absolute-git-dir` inside the hook returns the absolute bare
+  git-dir; basename == repo). The validate-githooks.yml workflow is still stale/manual-only
+  (old `.dotfiles/` paths) — node 8 covers hook dispatch via `unit.yml`; a dedicated rework of
+  validate-githooks is left to a later node if desired.
+
 ## CI status
-- Node 7 NOT YET pushed/CI-verified (orchestrator pushes + verifies). Prior:
+- Node 8 NOT YET pushed/CI-verified (orchestrator pushes + verifies). Prior:
+- Node 7 CI-VERIFIED GREEN: run 27791782158, ubuntu+macos+windows ALL success. Prior:
 - Node 6 CI-VERIFIED GREEN: run 27789885880, ubuntu+macos+windows ALL success (commit bd5b431). Prior:
 - Node 5 CI-verified GREEN (run 27787968200, ubuntu+macos+windows). Prior:
 - Branch pushed; `unit` workflow GREEN on ubuntu + macos + windows (run 27781322623).
@@ -110,10 +143,10 @@ Branch: `feat/sync-multi-repo-engine`. Build order = the plan's "Build order —
 - (Benign annotation: actions/checkout@v4 Node20 deprecation — bump to @v5 sometime.)
 
 ## Next
-- **Node 8** hook runner per-repo dispatch: runner identifies the firing repo via
-  `git rev-parse --absolute-git-dir` -> basename, runs `hooks/_shared/<hook>` then
-  `hooks/<repo>/<hook>`. Gate L1.7-L1.10, L5.4-L5.6, L4.4 (sh.exe identity).
-- Then nodes 9 (timer) → 10 (migration/bootstrap) → 11 (interop) → 12 (README).
+- **Node 9** timer payload swap: the one installed OS unit/task/loop's payload becomes
+  `dotfiles -tick` (loops `bare-repos/*`); keep all backends + names; add jitter (±0-15s) and
+  the `[timer] interval/jitter` settings. Gate L3.*.
+- Then nodes 10 (migration/bootstrap) → 11 (interop) → 12 (README).
 
 ## How to run tests
 - bash: `bash tests/run.sh bash`  (zsh: `zsh tests/run.sh zsh`)

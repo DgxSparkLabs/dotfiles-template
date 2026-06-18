@@ -171,3 +171,47 @@ plant_live_lock() {
   printf '999999\n' > "$gd/dotfiles-tick.lock/pid"
 }
 has_tick_lock() { [ -d "$(bare_dir "$1")/dotfiles-tick.lock" ]; }
+
+# --- Node 8 per-repo hook dispatch helpers --------------------------------------------
+# REPO_UNDER_TEST = the engine repo (this checkout); its real githooks/ is the shared stub set.
+# Each test_*.sh sets REPO_UNDER_TEST before using these.
+#
+# wire_hooks <name> — point a bare repo's core.hooksPath at the engine's real githooks/ (the
+# shared stubs that exec the runner). This is what makes a commit in that repo run the runner.
+wire_hooks() {
+  git --git-dir="$(bare_dir "$1")" config core.hooksPath "$REPO_UNDER_TEST/githooks"
+}
+
+# write_hook <repo|_shared> <hookname> <body...> — install a per-repo (or _shared) hook script
+# under $DOTFILES_ROOT/hooks/<scope>/<hookname>. POSIX sh, LF endings, executable bit (git on
+# Linux/macOS SILENTLY SKIPS a non-executable hook — see PITFALLS). The body is the script text
+# AFTER the shebang (we prepend `#!/bin/sh`). Use single-quoted heredoc at the call site.
+write_hook() {
+  local scope="$1" hook="$2" body="$3" dir
+  dir="$DOTFILES_ROOT/hooks/$scope"
+  mkdir -p "$dir"
+  { printf '#!/bin/sh\n'; printf '%s\n' "$body"; } > "$dir/$hook"
+  chmod +x "$dir/$hook"
+}
+
+# commit_in <repo> <relpath> <content> — stage+commit a work-tree file through the bare repo,
+# firing its hooks (core.hooksPath). Returns git's exit code (nonzero if a hook blocked it).
+# Hooks inherit this process's env, so export any marker-path vars before calling.
+commit_in() {
+  local repo="$1" rel="$2" content="$3" gd; gd="$(bare_dir "$repo")"
+  mkdir -p "$(dirname "$HOME/$rel")"
+  printf '%s\n' "$content" > "$HOME/$rel"
+  git --git-dir="$gd" --work-tree="$HOME" add -- "$rel"
+  git -C "$HOME" --git-dir="$gd" --work-tree="$HOME" commit -q -m "edit $rel"
+}
+
+# mk_repo_hookable <name> [branch] — a bare repo with a work-tree HEAD + git identity +
+# core.hooksPath wired to the engine stubs. No origin (hook tests don't push).
+mk_repo_hookable() {
+  local name="$1" branch="${2:-main}" gd; gd="$(bare_dir "$name")"
+  git init --bare -q "$gd"
+  git --git-dir="$gd" --work-tree="$HOME" symbolic-ref HEAD "refs/heads/$branch"
+  git --git-dir="$gd" config user.email "t@example.test"
+  git --git-dir="$gd" config user.name  "t"
+  wire_hooks "$name"
+}

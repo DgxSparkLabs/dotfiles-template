@@ -14,6 +14,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # uv is required by the per-repo hook dispatch tests (test_hooks.*): the shared hook
+      # stubs exec `uv run --project githooks-runner ...`. Without uv those tests fail loud
+      # (by design) rather than skip. setup-uv puts uv on PATH for all later steps/shells.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # Pre-build the runner venv once so the first hook commit doesn't race on `uv sync`.
+      - name: Sync githooks-runner
+        shell: bash
+        run: uv sync --locked --project githooks-runner
+
       - name: bash harness (Linux/macOS)
         if: runner.os != 'Windows'
         run: bash tests/run.sh bash
