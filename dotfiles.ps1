@@ -122,13 +122,28 @@ function __df_ref_enc($p) { ($p -replace '[^A-Za-z0-9]', '_') }
 # Reconcile the local branch with origin's tip, NEVER blocking. Run AFTER the local commit
 # and BEFORE push. Returns $true if a push should be attempted, $false to skip this tick.
 function __df_reconcile($repo, $gd, $branch) {
+  # CRITICAL (cross-OS): work-tree git verbs (merge/checkout/diff/add) must run with the CWD
+  # INSIDE the work tree. Git-for-Windows tolerated running them from an unrelated CWD with just
+  # --work-tree, but real Linux/macOS git enforces NEED_WORK_TREE: a bare repo's merge/checkout
+  # from outside the tree aborts, so the merge never starts, nothing is staged/pinned/logged —
+  # exactly the node-5 Linux failures. Run every work-tree verb as `git -C $W`.
+  $W = $env:HOME
+
   # Fetch the upstream branch. Network/remote failure -> skip push (never blocks).
-  git --git-dir="$gd" --work-tree="$env:HOME" fetch -q origin $branch 2>$null | Out-Null
+  git -C "$W" --git-dir="$gd" --work-tree="$W" fetch -q origin $branch 2>$null | Out-Null
   if ($LASTEXITCODE -ne 0) { __df_debug "reconcile: $repo fetch failed -> skip push"; return $false }
 
+  # Capture FULL SHAs of both sides BEFORE merging; never re-resolve a symbolic ref afterwards
+  # (FETCH_HEAD/HEAD can be empty/shift post-merge -> empty revs fed to log/update-ref).
   $theirs = (git --git-dir="$gd" rev-parse --verify -q FETCH_HEAD 2>$null | Out-String).Trim()
   if (-not $theirs) { __df_debug "reconcile: $repo no FETCH_HEAD"; return $true }
   $ours = (git --git-dir="$gd" rev-parse --verify -q HEAD 2>$null | Out-String).Trim()
+  # HEAD must be a real commit here (the tick committed before reconcile). Empty $ours would
+  # corrupt the loser-pin / newest-wins compare -> fail loudly, skip push (work-tree intact).
+  if (-not $ours) {
+    [Console]::Error.WriteLine("dotfiles: ${repo}: BUG: empty HEAD SHA in reconcile; skipping push (work-tree intact)")
+    return $false
+  }
 
   # Already contains origin tip (up to date or ahead) -> no merge needed.
   git --git-dir="$gd" merge-base --is-ancestor $theirs $ours 2>$null | Out-Null
@@ -142,10 +157,10 @@ function __df_reconcile($repo, $gd, $branch) {
   }
 
   # Try the merge without committing/fast-forwarding so we resolve clashes ourselves.
-  git --git-dir="$gd" --work-tree="$env:HOME" merge --no-commit --no-ff $theirs 2>$null | Out-Null
+  git -C "$W" --git-dir="$gd" --work-tree="$W" merge --no-commit --no-ff $theirs 2>$null | Out-Null
   if ($LASTEXITCODE -eq 0) {
-    git --git-dir="$gd" --work-tree="$env:HOME" commit --no-edit -q 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0) { git --git-dir="$gd" --work-tree="$env:HOME" commit --no-edit -q --allow-empty 2>$null | Out-Null }
+    git -C "$W" --git-dir="$gd" --work-tree="$W" commit --no-edit -q 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) { git -C "$W" --git-dir="$gd" --work-tree="$W" commit --no-edit -q --allow-empty 2>$null | Out-Null }
     __df_debug "reconcile: $repo clean merge"
     return $true
   }
@@ -157,35 +172,38 @@ function __df_reconcile($repo, $gd, $branch) {
   $logf = __df_conflicts_log $repo
   $epoch = [int][double]::Parse((Get-Date -UFormat %s))
 
-  $conflicted = @(git --git-dir="$gd" --work-tree="$env:HOME" diff --name-only --diff-filter=U 2>$null | Where-Object { $_ -ne '' })
+  $conflicted = @(git -C "$W" --git-dir="$gd" --work-tree="$W" diff --name-only --diff-filter=U 2>$null | Where-Object { $_ -ne '' })
   foreach ($path in $conflicted) {
-    $stages = @(git --git-dir="$gd" --work-tree="$env:HOME" ls-files -u -- "$path" 2>$null)
+    $stages = @(git -C "$W" --git-dir="$gd" --work-tree="$W" ls-files -u -- "$path" 2>$null)
     $hasOurs   = ($stages | Where-Object { $_ -match '\s2\t' }).Count -gt 0
     $hasTheirs = ($stages | Where-Object { $_ -match '\s3\t' }).Count -gt 0
     $winner = $null; $loserSha = $null
 
     if ($hasOurs -and $hasTheirs) {
+      # Compare against the PINNED pre-merge SHAs, never a re-resolved symbolic ref.
       $od = (git --git-dir="$gd" log -1 --format=%ct $ours   -- "$path" 2>$null | Out-String).Trim(); if (-not $od) { $od = '0' }
       $td = (git --git-dir="$gd" log -1 --format=%ct $theirs -- "$path" 2>$null | Out-String).Trim(); if (-not $td) { $td = '0' }
       if ([long]$td -gt [long]$od) {
         $winner = 'theirs'; $loserSha = $ours
-        git --git-dir="$gd" --work-tree="$env:HOME" checkout --theirs -- "$path" 2>$null | Out-Null
+        git -C "$W" --git-dir="$gd" --work-tree="$W" checkout --theirs -- "$path" 2>$null | Out-Null
       } else {
         $winner = 'ours'; $loserSha = $theirs
-        git --git-dir="$gd" --work-tree="$env:HOME" checkout --ours -- "$path" 2>$null | Out-Null
+        git -C "$W" --git-dir="$gd" --work-tree="$W" checkout --ours -- "$path" 2>$null | Out-Null
       }
     } elseif ($hasOurs) {
       # modify/delete: ours edited, theirs deleted -> edit-beats-delete.
       $winner = 'ours'; $loserSha = $theirs
-      git --git-dir="$gd" --work-tree="$env:HOME" checkout --ours -- "$path" 2>$null | Out-Null
+      git -C "$W" --git-dir="$gd" --work-tree="$W" checkout --ours -- "$path" 2>$null | Out-Null
     } else {
       # modify/delete: theirs edited, ours deleted -> edit-beats-delete.
       $winner = 'theirs'; $loserSha = $ours
-      git --git-dir="$gd" --work-tree="$env:HOME" checkout --theirs -- "$path" 2>$null | Out-Null
+      git -C "$W" --git-dir="$gd" --work-tree="$W" checkout --theirs -- "$path" 2>$null | Out-Null
     }
 
-    git --git-dir="$gd" --work-tree="$env:HOME" add -- "$path" 2>$null | Out-Null
+    git -C "$W" --git-dir="$gd" --work-tree="$W" add -- "$path" 2>$null | Out-Null
     $enc = __df_ref_enc $path
+    # $loserSha is a pinned pre-merge SHA ($ours/$theirs), guaranteed non-empty by the guards
+    # above, so update-ref never receives an empty object name.
     if ($loserSha) {
       git --git-dir="$gd" update-ref "refs/sync-losers/$enc/$epoch" $loserSha 2>$null | Out-Null
       __df_debug "reconcile: $repo pinned loser $loserSha for $path"
@@ -195,11 +213,11 @@ function __df_reconcile($repo, $gd, $branch) {
   }
 
   # Never leave the tree mid-merge.
-  $residual = @(git --git-dir="$gd" --work-tree="$env:HOME" diff --name-only --diff-filter=U 2>$null | Where-Object { $_ -ne '' })
-  if ($residual.Count -gt 0) { git --git-dir="$gd" --work-tree="$env:HOME" add -A 2>$null | Out-Null }
+  $residual = @(git -C "$W" --git-dir="$gd" --work-tree="$W" diff --name-only --diff-filter=U 2>$null | Where-Object { $_ -ne '' })
+  if ($residual.Count -gt 0) { git -C "$W" --git-dir="$gd" --work-tree="$W" add -A 2>$null | Out-Null }
 
-  git --git-dir="$gd" --work-tree="$env:HOME" commit --no-edit -q 2>$null | Out-Null
-  if ($LASTEXITCODE -ne 0) { git --git-dir="$gd" --work-tree="$env:HOME" commit --no-edit -q --allow-empty 2>$null | Out-Null }
+  git -C "$W" --git-dir="$gd" --work-tree="$W" commit --no-edit -q 2>$null | Out-Null
+  if ($LASTEXITCODE -ne 0) { git -C "$W" --git-dir="$gd" --work-tree="$W" commit --no-edit -q --allow-empty 2>$null | Out-Null }
   __df_debug "reconcile: $repo merge resolved + committed"
   return $true
 }

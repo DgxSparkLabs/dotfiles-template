@@ -157,8 +157,14 @@ New-Env; Reg-Machine1
 Mk-RepoWithOrigin ex main
 $gdEx = MGd 1 ex
 New-Item -ItemType Directory -Force -Path (Join-Path $gdEx 'hooks') | Out-Null
-# pre-push hook MUST be LF + executable; runs under Git-for-Windows sh.exe.
-[System.IO.File]::WriteAllText((Join-Path $gdEx 'hooks/pre-push'), "#!/usr/bin/env bash`nexit 1`n")
+# Force EVERY push to be rejected deterministically via a pre-push hook that exits nonzero. The
+# hook MUST be (a) LF-only, (b) a POSIX shell (`#!/bin/sh`), and (c) EXECUTABLE on Linux/macOS —
+# git silently SKIPS a non-executable hook there, so without the +x bit the push would succeed
+# and this test would wrongly see rc=0 (the original L2.10 Linux failure). On Windows the bit is
+# irrelevant (Git-for-Windows runs hooks via sh.exe), so chmod is a no-op/absent there.
+$prePush = Join-Path $gdEx 'hooks/pre-push'
+[System.IO.File]::WriteAllText($prePush, "#!/bin/sh`nexit 1`n")
+if ($IsLinux -or $IsMacOS) { chmod +x $prePush }
 Set-Content -LiteralPath (Join-Path (MHome 1) '.config/ex/seed') -Value "m1-exhaust`n" -NoNewline
 Pin '2021-01-01T00:00:00'; Tick-Machine1 ex
 # Tick returns nonzero (push skipped) but DID NOT block, and logged a reason on stderr.

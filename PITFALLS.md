@@ -55,3 +55,26 @@ Traps hit during implementation. Read before editing the dispatcher/harness.
   origin between fetch and push. Install a `pre-push` hook (`#!/usr/bin/env bash\nexit 1`, LF +
   executable) on the pushing repo — it rejects EVERY attempt, so the bounded retry loop exhausts
   predictably. Bare repos fire `$GIT_DIR/hooks/pre-push` on `push` even with `--git-dir`.
+- **Git-for-Windows runs work-tree verbs from ANY cwd; real Linux/macOS git does NOT.** `git
+  merge` / `checkout` / `diff` / `add` in a bare repo driven by `--git-dir=<bare> --work-tree=$HOME`
+  worked on Windows from an unrelated cwd, but on Linux/macOS git enforces NEED_WORK_TREE: the cwd
+  must be INSIDE the work tree, else `merge` aborts ("must be run in a work tree"). In node 5 the
+  merge then never started -> no conflicts staged -> no loser ref pinned -> no conflicts.log -> the
+  per-path `git log -1 --format=%ct <rev>` / `update-ref` later got fed empty/garbage and printed
+  `fatal: Needed a single revision` / `Not a valid object name`. (`add`/`commit`/`push` in node 4
+  have NO such requirement, which is why node 4 passed CI but node 5 didn't.) FIX: run every
+  work-tree verb as `git -C "$HOME" --git-dir=… --work-tree=…` so the cwd is the tree on all OSes.
+  (`-resolve`'s blob extraction uses only `--git-dir` object ops — rev-parse/ls-tree/cat-file — so
+  it needs no `-C`.) Verified in both `dotfiles.sh` and `dotfiles.ps1` `__df_reconcile`.
+- **Capture both merge sides' FULL SHAs BEFORE merging; never re-resolve a symbolic ref after.**
+  `ours=$(rev-parse HEAD)` + `theirs=$(rev-parse FETCH_HEAD)` BEFORE `merge --no-commit`, then use
+  only those pinned SHAs for the newest-by-`%ct` compare, the loser-pin `update-ref`, and the
+  blob extraction. A re-resolved `FETCH_HEAD`/`MERGE_HEAD` can be empty mid-merge and silently
+  passes an empty object name to `git log`/`update-ref`. Guard both: empty `FETCH_HEAD` -> skip
+  push; empty `HEAD` after the tick's own commit is a BUG -> fail loudly + skip (work-tree intact).
+- **A `pre-push` hook is silently SKIPPED on Linux/macOS unless it has the +x bit.** Git-for-Windows
+  runs hooks via sh.exe regardless of the mode bit, so a hook written without `chmod +x` "worked" on
+  Windows but did NOT fire on Linux — the L2.10 push-exhaust test then saw push succeed (rc=0) and
+  failed. In `test_merge.ps1`, after `[IO.File]::WriteAllText(hook, "#!/bin/sh`nexit 1`n")`, do
+  `if ($IsLinux -or $IsMacOS) { chmod +x $hook }`. (The bash test already `chmod +x`'d its hook,
+  which is why bash L2.10 passed CI.)

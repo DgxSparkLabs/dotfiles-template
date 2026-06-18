@@ -151,17 +151,37 @@ __df_reconcile() {
   local repo="$1" gd="$2" branch="$3"
   local g; # shorthand prefix used inline below
 
+  # CRITICAL (cross-OS): work-tree git verbs (merge/checkout/diff/add) must run with the CWD
+  # INSIDE the work tree. Git-for-Windows tolerated running them from an unrelated CWD with just
+  # --work-tree, but real Linux/macOS git enforces NEED_WORK_TREE: a bare repo's merge/checkout
+  # from outside the tree aborts ("fatal: this operation must be run in a work tree"), so the
+  # merge never starts, no conflicts are staged, no loser is pinned, nothing is logged — exactly
+  # the node-5 Linux failures. Run every work-tree verb as `git -C "$HOME"` so the CWD is the
+  # tree on all OSes. (cd into a subshell would lose the rest of the function's state.)
+  local W="$HOME"
+
   # Fetch the upstream branch. Network/remote failure -> caller skips push (never blocks).
-  if ! git --git-dir="$gd" --work-tree="$HOME" fetch -q origin "$branch" 2>/dev/null; then
+  if ! git -C "$W" --git-dir="$gd" --work-tree="$W" fetch -q origin "$branch" 2>/dev/null; then
     __df_debug "reconcile: $repo fetch failed -> skip push this tick"
     return 1
   fi
 
   # Nothing fetched (no such ref yet) -> nothing to merge; push will create/seed it.
+  # Capture FULL SHAs of both sides BEFORE merging, and NEVER re-resolve a symbolic ref later:
+  # MERGE_HEAD/FETCH_HEAD/HEAD can resolve to empty or shift after the merge starts, which fed
+  # empty revisions to git log/update-ref ("fatal: Needed a single revision" / "Not a valid
+  # object name"). $ours/$theirs below are pinned, non-empty SHAs.
   local theirs
   theirs="$(git --git-dir="$gd" rev-parse --verify -q FETCH_HEAD 2>/dev/null)" || { __df_debug "reconcile: $repo no FETCH_HEAD"; return 0; }
+  [ -n "$theirs" ] || { __df_debug "reconcile: $repo empty FETCH_HEAD SHA -> skip push"; return 1; }
   local ours
   ours="$(git --git-dir="$gd" rev-parse --verify -q HEAD 2>/dev/null)"
+  # HEAD must be a real commit by this point (the tick committed before reconcile). An empty
+  # $ours would silently corrupt the loser-pin / newest-wins compare -> fail loudly, skip push.
+  if [ -z "$ours" ]; then
+    printf 'dotfiles: %s: BUG: empty HEAD SHA in reconcile; skipping push (work-tree intact)\n' "$repo" >&2
+    return 1
+  fi
 
   # Already up to date or strictly ahead (their tip is our ancestor) -> no merge needed.
   if git --git-dir="$gd" merge-base --is-ancestor "$theirs" "$ours" 2>/dev/null; then
@@ -177,10 +197,10 @@ __df_reconcile() {
   fi
 
   # Try the merge without committing or fast-forwarding so we can resolve clashes ourselves.
-  if git --git-dir="$gd" --work-tree="$HOME" merge --no-commit --no-ff "$theirs" >/dev/null 2>&1; then
+  if git -C "$W" --git-dir="$gd" --work-tree="$W" merge --no-commit --no-ff "$theirs" >/dev/null 2>&1; then
     # Clean auto-merge (incl. same-file/different-lines). Commit it.
-    git --git-dir="$gd" --work-tree="$HOME" commit --no-edit -q >/dev/null 2>&1 \
-      || git --git-dir="$gd" --work-tree="$HOME" commit --no-edit -q --allow-empty >/dev/null 2>&1
+    git -C "$W" --git-dir="$gd" --work-tree="$W" commit --no-edit -q >/dev/null 2>&1 \
+      || git -C "$W" --git-dir="$gd" --work-tree="$W" commit --no-edit -q --allow-empty >/dev/null 2>&1
     __df_debug "reconcile: $repo clean merge"
     return 0
   fi
@@ -194,40 +214,43 @@ __df_reconcile() {
   local epoch; epoch="$(date +%s 2>/dev/null || printf '0')"
 
   local conflicted path
-  conflicted="$(git --git-dir="$gd" --work-tree="$HOME" diff --name-only --diff-filter=U 2>/dev/null)"
+  conflicted="$(git -C "$W" --git-dir="$gd" --work-tree="$W" diff --name-only --diff-filter=U 2>/dev/null)"
   local IFS_SAVE="$IFS"; IFS='
 '
   for path in $conflicted; do
     IFS="$IFS_SAVE"
     local has_ours has_theirs winner loser_sha enc
-    has_ours="$(git --git-dir="$gd" --work-tree="$HOME" ls-files -u -- "$path" | awk '$3==2{print 1}' | head -n1)"
-    has_theirs="$(git --git-dir="$gd" --work-tree="$HOME" ls-files -u -- "$path" | awk '$3==3{print 1}' | head -n1)"
+    has_ours="$(git -C "$W" --git-dir="$gd" --work-tree="$W" ls-files -u -- "$path" | awk '$3==2{print 1}' | head -n1)"
+    has_theirs="$(git -C "$W" --git-dir="$gd" --work-tree="$W" ls-files -u -- "$path" | awk '$3==3{print 1}' | head -n1)"
 
     if [ -n "$has_ours" ] && [ -n "$has_theirs" ]; then
       # Content conflict: newest committer-date wins (per side's last commit touching the path).
+      # Compare against the PINNED pre-merge SHAs ($ours/$theirs), never a re-resolved symbolic ref.
       local od td
       od="$(git --git-dir="$gd" log -1 --format=%ct "$ours"   -- "$path" 2>/dev/null)"; od="${od:-0}"
       td="$(git --git-dir="$gd" log -1 --format=%ct "$theirs" -- "$path" 2>/dev/null)"; td="${td:-0}"
       if [ "$td" -gt "$od" ]; then
         winner=theirs; loser_sha="$ours"
-        git --git-dir="$gd" --work-tree="$HOME" checkout --theirs -- "$path" >/dev/null 2>&1
+        git -C "$W" --git-dir="$gd" --work-tree="$W" checkout --theirs -- "$path" >/dev/null 2>&1
       else
         # Tie or ours newer -> ours wins (deterministic: committer-date, then ours-on-tie).
         winner=ours;   loser_sha="$theirs"
-        git --git-dir="$gd" --work-tree="$HOME" checkout --ours -- "$path" >/dev/null 2>&1
+        git -C "$W" --git-dir="$gd" --work-tree="$W" checkout --ours -- "$path" >/dev/null 2>&1
       fi
     elif [ -n "$has_ours" ]; then
       # modify/delete: ours edited, theirs deleted -> edit-beats-delete (keep ours).
       winner=ours; loser_sha="$theirs"
-      git --git-dir="$gd" --work-tree="$HOME" checkout --ours -- "$path" >/dev/null 2>&1
+      git -C "$W" --git-dir="$gd" --work-tree="$W" checkout --ours -- "$path" >/dev/null 2>&1
     else
       # modify/delete: theirs edited, ours deleted -> edit-beats-delete (keep theirs).
       winner=theirs; loser_sha="$ours"
-      git --git-dir="$gd" --work-tree="$HOME" checkout --theirs -- "$path" >/dev/null 2>&1
+      git -C "$W" --git-dir="$gd" --work-tree="$W" checkout --theirs -- "$path" >/dev/null 2>&1
     fi
 
-    git --git-dir="$gd" --work-tree="$HOME" add -- "$path" >/dev/null 2>&1
-    # Pin the losing side (LOCAL ref) so it is recoverable; record it in the local log.
+    git -C "$W" --git-dir="$gd" --work-tree="$W" add -- "$path" >/dev/null 2>&1
+    # Pin the losing side (LOCAL ref) so it is recoverable; record it in the local log. The loser
+    # is a pinned pre-merge SHA ($ours or $theirs), guaranteed non-empty by the guards above, so
+    # update-ref never receives an empty object name (the prior Linux "Not a valid object name").
     enc="$(__df_ref_enc "$path")"
     if [ -n "$loser_sha" ]; then
       git --git-dir="$gd" update-ref "refs/sync-losers/$enc/$epoch" "$loser_sha" 2>/dev/null \
@@ -238,14 +261,14 @@ __df_reconcile() {
   IFS="$IFS_SAVE"
 
   # Any remaining unmerged paths? (Shouldn't be — but never leave the tree mid-merge.)
-  if [ -n "$(git --git-dir="$gd" --work-tree="$HOME" diff --name-only --diff-filter=U 2>/dev/null)" ]; then
+  if [ -n "$(git -C "$W" --git-dir="$gd" --work-tree="$W" diff --name-only --diff-filter=U 2>/dev/null)" ]; then
     __df_debug "reconcile: $repo residual conflicts; staging current work-tree"
-    git --git-dir="$gd" --work-tree="$HOME" add -A >/dev/null 2>&1
+    git -C "$W" --git-dir="$gd" --work-tree="$W" add -A >/dev/null 2>&1
   fi
 
   # Commit the merge (never --edit; never block on an editor).
-  git --git-dir="$gd" --work-tree="$HOME" commit --no-edit -q >/dev/null 2>&1 \
-    || git --git-dir="$gd" --work-tree="$HOME" commit --no-edit -q --allow-empty >/dev/null 2>&1
+  git -C "$W" --git-dir="$gd" --work-tree="$W" commit --no-edit -q >/dev/null 2>&1 \
+    || git -C "$W" --git-dir="$gd" --work-tree="$W" commit --no-edit -q --allow-empty >/dev/null 2>&1
   __df_debug "reconcile: $repo merge resolved + committed"
   return 0
 }
