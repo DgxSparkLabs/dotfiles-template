@@ -46,6 +46,67 @@ dotfiles -update                upgrade the engine (git pull in ~/.dotfiles/comm
 
 # Engine settings live in ~/.dotfiles/config (git-config syntax), OUTSIDE every bare repo.
 function __df_config { git config -f (Join-Path $DotfilesRoot 'config') @args }
+
+# Raw reader: returns the value for <section>.<key>, or $null if unset/malformed.
+# Distinguishes unset (git rc 1) from malformed config (git rc >= 2): on malformed it
+# warns to real stderr and returns $null (BAD-path safe refuse). Sets $script:RawRc.
+function __df_raw($dotted) {
+  $cf = Join-Path $DotfilesRoot 'config'
+  $out = git config -f "$cf" --get "$dotted" 2>$null
+  $script:RawRc = $LASTEXITCODE
+  if ($script:RawRc -ge 2) {
+    [Console]::Error.WriteLine("dotfiles: config malformed at $cf; using default for $dotted")
+    return $null
+  }
+  if ($script:RawRc -ne 0) { return $null }
+  return ($out | Out-String).Trim()
+}
+
+# tick: bool with safe default OFF. Unparseable (e.g. "maybe") -> default + warning. Returns 'true'/'false'.
+function __df_setting_tick($repo) {
+  $def = 'false'
+  $raw = __df_raw "$repo.tick"
+  if ($null -eq $raw) { return $def }
+  switch -regex ($raw.ToLower()) {
+    '^(true|yes|on|1)$'  { return 'true' }
+    '^(false|no|off|0)$' { return 'false' }
+    default {
+      [Console]::Error.WriteLine("dotfiles: invalid bool for $repo.tick=$raw; using default $def")
+      return $def
+    }
+  }
+}
+
+# add: only "all" -> -A; anything else (incl. junk) -> tracked (-u), warning on junk. Returns '-A'/'-u'.
+function __df_setting_add($repo) {
+  $raw = __df_raw "$repo.add"
+  if ($null -eq $raw) { return '-u' }
+  switch -regex ($raw.ToLower()) {
+    '^all$'            { return '-A' }
+    '^(tracked|-u|)$'  { return '-u' }
+    default {
+      [Console]::Error.WriteLine("dotfiles: invalid value for $repo.add=$raw; using default tracked")
+      return '-u'
+    }
+  }
+}
+
+# [timer] interval: positive integer seconds, default 60. Non-numeric -> default + warning.
+function __df_setting_timer_interval {
+  $def = 60
+  $raw = __df_raw 'timer.interval'
+  if ($null -eq $raw) { return $def }
+  if ($raw -match '^[0-9]+$') { return [int]$raw }
+  [Console]::Error.WriteLine("dotfiles: invalid timer.interval=$raw; using default $def")
+  return $def
+}
+
+# Generic reader retained for forward-compat callers. Usage: __df_setting <repo> <key> <default>
+function __df_setting($repo, $key, $def) {
+  $raw = __df_raw "$repo.$key"
+  if ($null -eq $raw) { return $def }
+  return $raw
+}
 function __df_update { __df_debug "updating engine at $DotfilesCommon"; git -C $DotfilesCommon pull --ff-only }
 function __df_timer  { & (Join-Path $DotfilesCommon 'timer/dotfiles-timer.ps1') @args }
 

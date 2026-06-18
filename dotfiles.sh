@@ -60,11 +60,69 @@ EOF
 # Engine settings live in ~/.dotfiles/config (git-config syntax), OUTSIDE every bare repo.
 __df_config() { git config -f "$(__df_config_file)" "$@"; }
 
-# Read one repo setting with a safe default. Usage: __df_setting <repo> <key> <default> [--type=bool]
+# Raw reader: echo the value for <section>.<key>, or the empty string if unset.
+# Distinguishes "unset" (rc 1) from "config file malformed" (rc>=2). On a malformed
+# config it warns to stderr and behaves as if the key were unset (BAD-path safe refuse).
+# Echoes nothing and returns: 0=found, 1=unset/empty, 2=malformed.
+__df_raw() {
+  local dotted="$1" cf out rc
+  cf="$(__df_config_file)"
+  out="$(git config -f "$cf" --get "$dotted" 2>/dev/null)"; rc=$?
+  if [ "$rc" -ge 2 ]; then
+    # rc>=2 from `git config` = the file could not be parsed (malformed).
+    printf 'dotfiles: config malformed at %s; using default for %s\n' "$cf" "$dotted" >&2
+    return 2
+  fi
+  [ "$rc" -eq 0 ] && printf '%s' "$out"
+  return "$rc"
+}
+
+# tick: bool with safe default OFF. Unparseable (e.g. "maybe") -> default + warning.
+# Echoes "true" or "false". Usage: __df_setting_tick <repo>
+__df_setting_tick() {
+  local repo="$1" raw rc def=false
+  raw="$(__df_raw "${repo}.tick")"; rc=$?
+  [ "$rc" -ne 0 ] && { printf '%s' "$def"; return 0; }   # unset or malformed -> default off
+  case "$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')" in
+    true|yes|on|1)   printf 'true' ;;
+    false|no|off|0)  printf 'false' ;;
+    *) printf 'dotfiles: invalid bool for %s.tick=%s; using default %s\n' "$repo" "$raw" "$def" >&2
+       printf '%s' "$def" ;;
+  esac
+}
+
+# add: only "all" -> -A; anything else (incl. junk) -> tracked (-u), with a warning on junk.
+# Echoes "-A" or "-u". Usage: __df_setting_add <repo>
+__df_setting_add() {
+  local repo="$1" raw rc
+  raw="$(__df_raw "${repo}.add")"; rc=$?
+  [ "$rc" -ne 0 ] && { printf '%s' '-u'; return 0; }      # unset or malformed -> tracked
+  case "$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')" in
+    all)            printf '%s' '-A' ;;
+    tracked|''|-u)  printf '%s' '-u' ;;
+    *) printf 'dotfiles: invalid value for %s.add=%s; using default tracked\n' "$repo" "$raw" >&2
+       printf '%s' '-u' ;;
+  esac
+}
+
+# [timer] interval: positive integer seconds, default 60. Non-numeric -> default + warning.
+__df_setting_timer_interval() {
+  local raw rc def=60
+  raw="$(__df_raw 'timer.interval')"; rc=$?
+  [ "$rc" -ne 0 ] && { printf '%s' "$def"; return 0; }
+  case "$raw" in
+    ''|*[!0-9]*) printf 'dotfiles: invalid timer.interval=%s; using default %s\n' "$raw" "$def" >&2
+                 printf '%s' "$def" ;;
+    *)           printf '%s' "$raw" ;;
+  esac
+}
+
+# Generic reader retained for forward-compat callers. Usage: __df_setting <repo> <key> <default>
 __df_setting() {
-  local repo="$1" key="$2" def="$3"; shift 3
-  git config -f "$(__df_config_file)" "$@" --default "$def" "${repo}.${key}" 2>/dev/null \
-    || printf '%s' "$def"
+  local repo="$1" key="$2" def="$3" raw rc
+  raw="$(__df_raw "${repo}.${key}")"; rc=$?
+  [ "$rc" -ne 0 ] && { printf '%s' "$def"; return 0; }
+  printf '%s' "$raw"
 }
 
 __df_update() {
