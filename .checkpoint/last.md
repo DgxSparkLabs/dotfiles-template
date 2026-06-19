@@ -2,7 +2,10 @@
 
 Branch: feat/sync-multi-repo-engine
 
-## Last node DONE (local green; NOT yet pushed/CI-verified — orchestrator pushes + verifies CI)
+## Last node DONE (CI-VERIFIED GREEN: run 27796700977, ubuntu+macos+windows ALL success)
+- Node-9 commit chain: ed3a873 impl -> 8b15eca (BSD sed→heredoc bake + best-effort registration)
+  -> ec8453a (live-manager asserts gated behind DOTFILES_TIMER_LIVE opt-in; GH systemd probe lies)
+  -> 0847c80 (GH windows runs ADMIN → DOTFILES_TIMER_FORCE_USER seam to test non-admin VBS+loop).
 - **Node 9** — single timer fans out via `dotfiles -tick` + interval/jitter.
   - SWAPPED both backends' generated payload from the legacy baked single-repo add/commit/push to
     a call to the dispatcher's fan-out tick (loops `bare-repos/*`):
