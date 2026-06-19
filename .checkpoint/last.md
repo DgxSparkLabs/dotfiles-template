@@ -2,7 +2,9 @@
 
 Branch: feat/sync-multi-repo-engine
 
-## MOST RECENT: Node 11 CI FIX (windows leg RED -> Git-Bash-safe tar paths; committed, NOT pushed)
+## NODE 11 DONE — CI-VERIFIED GREEN: interop run 27799902325 (seed->win->mac->verify ALL success) + unit 27799902327 success. Commits 373d1fc impl -> 2fa8e66 (Git-Bash tar cygpath fix). FULL ubuntu<->windows<->macos round-trip PROVEN. NEXT = Node 12 (README rewrite, the LAST node).
+
+## Node 11 CI FIX history (windows leg RED -> Git-Bash-safe tar paths)
 First CI run of the chained `interop` workflow: seed (ubuntu) PASSED, win (windows) FAILED, mac+verify
 skipped. Windows tar error:
   `tar: D\:\a\\dotfiles-template\\dotfiles-template/_interop: Cannot open: No such file or directory`
