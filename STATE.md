@@ -222,7 +222,39 @@ Branch: `feat/sync-multi-repo-engine`. Build order = the plan's "Build order —
   `bash tests/run.sh bash` 9/0/3 timer, 0 FAIL overall (unchanged); confirmed NO runaway loop survives.
   Committed (NOT pushed); orchestrator re-verifies CI.
 
+- **Node 10 (migration + bootstrap)** — fresh-machine bootstrap + legacy->container migration.
+  - NEW `bootstrap.{sh,ps1}` (engine root; ship in `common/`): plan "A. First-run setup" steps 1-4
+    in one run, leaving step 5 (verify + `dotfiles -config machine.tick on`) to the user (tick
+    defaults OFF). (1) clone engine -> `~/.dotfiles/common` (`--engine`/$DOTFILES_ENGINE_URL);
+    (2) append the profile source-guard ONCE (idempotent marker-substring check; bash/zsh ->
+    ~/.bashrc|~/.zshrc, pwsh -> $PROFILE; DOTFILES_PROFILE override for tests); (3) bare-clone the
+    machine repo -> `bare-repos/machine` on a per-machine branch (default = hostname), set the
+    fetch refspec + status.showUntrackedFiles=no, safe checkout that BACKS UP conflicting work-tree
+    files (.bak-<ts>), then wire core.hooksPath; (4) `dotfiles -timer install`. Idempotent +
+    re-runnable.
+  - NEW `migrate.{sh,ps1}` (engine root) + `dotfiles -migrate` verb (sh re-execs `migrate.sh` under
+    bash; ps invokes `migrate.ps1`). Safe step order: (a) detect legacy (bare git-dir AT $ROOT:
+    HEAD+objects+refs there); (b) STOP the OLD timer FIRST (systemctl/launchctl by legacy singleton
+    name + new-engine uninstall) BEFORE moving the git-dir (stale committer guard); (c) MOVE only the
+    git metadata from $ROOT -> `bare-repos/machine/` (skips common/bare-repos/hooks/config/state +
+    the legacy `.dotfiles` helper subtree; work-tree files in $HOME never move); (d) ensure engine at
+    common/ (clone if missing); (e) set machine core.hooksPath -> engine githooks; (f) strip legacy
+    `alias dotfiles*=` / old-helper source lines from the profile + append the new dispatcher guard;
+    (g) `dotfiles -timer install`. Aborts clearly on ambiguous state (legacy AND migrated both
+    present) or no-legacy-no-machine.
+  - Node 7 doctor ALREADY flags the L5.25 partial migration (git-dir moved but core.hooksPath unset
+    -> hooks:MISSING + "core.hooksPath not set" fix) — no doctor change needed.
+  - NEW `tests/test_migration.{sh,ps1}`: L1.14 (full legacy migration: machine git-dir valid; ALL
+    work-tree files byte-identical; old top-level metadata gone; `machine status` clean; per-repo
+    hook fires; `-ls` shows machine), L1.14b (idempotent re-run), L1.14c (abort on no-legacy-no-
+    machine), L5.25 (partial migration -> doctor warns + remaining step, exit 0), BOOT-idempotent
+    (double profile-append != duplicate; full layout from empty via LOCAL bare origins, no network).
+    Fake HOME + DOTFILES_ROOT via new_env; NEVER touches real ~/.dotfiles or profile.
+  - Local: `bash tests/run.sh bash` overall rc=0 (migration 23/0/0); `pwsh tests/run.ps1` overall
+    rc=0 (migration 23/0/0). No suite regressed. Committed (NOT pushed); orchestrator verifies CI.
+
 ## CI status
+- Node 10 committed locally (bootstrap + migrate + tests); NOT YET pushed/CI-verified. Prior:
 - Node 9 CI FIX #3 committed locally (force user-mode via `DOTFILES_TIMER_FORCE_USER` for the windows
   non-admin file asserts); NOT YET pushed/CI-verified (orchestrator re-verifies). Prior:
 - Node 9 CI FIX #2 committed locally (live-manager asserts gated behind `DOTFILES_TIMER_LIVE`
@@ -239,10 +271,9 @@ Branch: `feat/sync-multi-repo-engine`. Build order = the plan's "Build order —
 - (Benign annotation: actions/checkout@v4 Node20 deprecation — bump to @v5 sometime.)
 
 ## Next
-- **Node 10** migration + bootstrap.{sh,ps1}: relocate the legacy single `~/.dotfiles` bare repo
-  into `bare-repos/machine/`, split the engine into `common/`, uninstall the old timer first, and
-  re-home the dispatcher/hooksPath. Gate L1.14, L5.25.
-- Then nodes 11 (interop) → 12 (README).
+- **Node 11** cross-OS interop chain (.gitattributes normalization, file modes, path handling,
+  sh.exe hook identity). Gate L4.1-L4.6 (chained ubuntu->windows->macos->ubuntu jobs).
+- Then node 12 (README full rewrite).
 
 ## How to run tests
 - bash: `bash tests/run.sh bash`  (zsh: `zsh tests/run.sh zsh`)

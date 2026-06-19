@@ -330,3 +330,36 @@ Traps hit during implementation. Read before editing the dispatcher/harness.
   uninstall both see the var. GENERAL RULE: when the production code branches on a runtime fact the CI
   sandbox forces the "wrong" way (elevation, OS, TTY), add an explicit force-env seam so the OTHER
   branch's on-disk artifacts stay deterministically testable — don't make the asserts probe-dependent.
+- **bootstrap.ps1/migrate.ps1 child pwsh: force `$HOME` from `$env:HOME` — the PS automatic `$HOME`
+  is USERPROFILE on Windows, NOT `$env:HOME`** (node 10). The dispatcher works in tests because
+  `_invoke.ps1` runs `Set-Variable -Name HOME -Value $env:HOME -Force`. The bootstrap/migrate scripts
+  run in their OWN child pwsh (`pwsh -File bootstrap.ps1`) and use `--work-tree="$HOME"`; without the
+  same force, `$HOME` was the REAL `C:\Users\<you>` while the test set only `$env:HOME` to a temp dir,
+  so `git checkout` wrote to the real home (or hit conflicts there) and the temp work-tree stayed
+  empty — BOOT-worktree read []. FIX: first executable line of both scripts:
+  `if ($env:HOME) { Set-Variable -Name HOME -Value $env:HOME -Force -ErrorAction SilentlyContinue }`.
+  This is also correct for real cross-platform/users who export HOME. (`$HOME` is read-only via plain
+  `$HOME = ...` — use Set-Variable -Force; see the top-of-file PITFALL.)
+- **Wire `core.hooksPath` AFTER the bare-clone checkout, never before** (node 10 bootstrap). A bare
+  repo with `core.hooksPath` set fires the runner's `post-checkout` hook during `git checkout`; if the
+  runner exits nonzero, `git checkout` REPORTS FAILURE even though the work-tree was written correctly.
+  Bootstrap originally set hooksPath before the checkout and keyed its conflict-backup branch off the
+  checkout exit code -> it falsely "detected a conflict", backed up the just-written file, and the
+  retry produced nothing. FIX: do `fetch` + `checkout` first, then `git config core.hooksPath ...`.
+  (Detecting checkout conflicts must key off the EXIT CODE of a hooks-UNwired checkout, OR off the
+  listed conflicting paths — a post-hoc `rev-parse --abbrev-ref HEAD` compare is unreliable for a
+  freshly-cloned bare repo.)
+- **Migration test fixtures must NOT track a file named `.gitconfig`** (node 10). Migration/bootstrap
+  git ops run with `--work-tree=$HOME`, so git reads `$HOME/.gitconfig` as the USER GLOBAL config. A
+  fixture that seeds `.gitconfig` with non-git-config text makes EVERY subsequent git command print
+  `fatal: bad config line 1` and breaks the legacy-detect `rev-parse` (the migration then aborts with
+  "no legacy layout"). Use innocuous tracked names (e.g. `.bashrc.tracked`, `.config/app/conf`).
+  Same trap if a debug run does `export HOME=<realhome>` then `git config --global` with junk — it
+  pollutes the REAL `~/.gitconfig`; keep debug repros under an isolated temp HOME.
+- **Migration relocates ONLY git metadata; the legacy `~/.dotfiles/.dotfiles` helper subtree is
+  dropped, work-tree files in $HOME never move** (node 10). The legacy layout is a bare git-dir AT
+  `~/.dotfiles` (HEAD/objects/refs directly there) plus helper files under `~/.dotfiles/.dotfiles/`.
+  The mover skips `common bare-repos hooks config state .dotfiles` and moves everything else under
+  $ROOT into `bare-repos/machine/` — the `.dotfiles` helpers are intentionally NOT carried over (the
+  engine in `common/` replaces them). Detect legacy via `[ -f $ROOT/HEAD ] && [ -d $ROOT/objects ] &&
+  git --git-dir=$ROOT rev-parse` so the NEW layout (no metadata at $ROOT) is never misread as legacy.

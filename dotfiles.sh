@@ -67,6 +67,7 @@ dotfiles -show                  list recorded sync conflicts
 dotfiles -resolve <path>        recover the losing side of a conflict
 dotfiles -timer <install|...>   manage the single auto-tick timer
 dotfiles -update                upgrade the engine (git pull in ~/.dotfiles/common)
+dotfiles -migrate               migrate a legacy single-repo layout to the container layout
 EOF
 }
 
@@ -157,6 +158,13 @@ __df_update() {
 }
 
 __df_timer() { bash "$DOTFILES_COMMON/timer/dotfiles-timer.sh" "$@"; }
+
+# Migrate a legacy single-repo (~/.dotfiles bare) layout to the container layout. The heavy
+# work lives in migrate.sh (re-exec'd under bash for any non-bash interactive shell, like the
+# other heavy verbs). DOTFILES_ROOT/DOTFILES_COMMON are forwarded so it targets the same root.
+__df_migrate() {
+  DOTFILES_ROOT="$DOTFILES_ROOT" DOTFILES_COMMON="$DOTFILES_COMMON" bash "$DOTFILES_COMMON/migrate.sh" "$@"
+}
 
 # --- Node 5: never-block reconcile + surfaced resolution ------------------------------
 # State (loser log) lives under ~/.dotfiles/state/<repo>/ — LOCAL ONLY, never pushed.
@@ -863,6 +871,7 @@ dotfiles() {
         config)  __df_config "$@" ;;
         update)  __df_update "$@" ;;
         timer)   __df_timer "$@" ;;
+        migrate) __df_migrate "$@" ;;
         tick)    __df_tick "$@" ;;
         doctor)  __df_doctor "$@" ;;
         show)    __df_show "$@" ;;

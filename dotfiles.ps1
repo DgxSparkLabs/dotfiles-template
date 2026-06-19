@@ -43,6 +43,7 @@ dotfiles -show                  list recorded sync conflicts
 dotfiles -resolve <path>        recover the losing side of a conflict
 dotfiles -timer <install|...>   manage the single auto-tick timer
 dotfiles -update                upgrade the engine (git pull in ~/.dotfiles/common)
+dotfiles -migrate               migrate a legacy single-repo layout to the container layout
 '@
 }
 
@@ -122,6 +123,9 @@ function __df_setting($repo, $key, $def) {
 }
 function __df_update { __df_debug "updating engine at $DotfilesCommon"; git -C $DotfilesCommon pull --ff-only }
 function __df_timer  { & (Join-Path $DotfilesCommon 'timer/dotfiles-timer.ps1') @args }
+# Migrate a legacy single-repo (~/.dotfiles bare) layout to the container layout. Heavy work
+# lives in migrate.ps1. DOTFILES_ROOT/DOTFILES_COMMON are already in the env for it to read.
+function __df_migrate { & (Join-Path $DotfilesCommon 'migrate.ps1') @args }
 
 # --- Node 5: never-block reconcile + surfaced resolution ------------------------------
 # State (loser log) lives under ~/.dotfiles/state/<repo>/ — LOCAL ONLY, never pushed.
@@ -658,6 +662,7 @@ function dotfiles {
       'config'  { __df_config @rest; return }
       'update'  { __df_update @rest; return }
       'timer'   { __df_timer @rest; return }
+      'migrate' { __df_migrate @rest; return }
       'tick'    { __df_tick @rest; return }
       'doctor'  { __df_doctor @rest; return }
       'show'    { __df_show @rest; return }
