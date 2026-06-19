@@ -302,10 +302,34 @@ Branch: `feat/sync-multi-repo-engine`. Build order = the plan's "Build order —
     The true multi-OS chain (esp. L4.3 755 + macOS leg) runs only on CI — authored correct-by-
     construction; orchestrator verifies.
 
+- **Node 11 CI FIX (windows leg RED -> Git-Bash-safe tar paths)** — first CI run of the chained
+  `interop` workflow: `seed` (ubuntu) PASSED, `win` (windows) FAILED at the unpack/pack tar steps,
+  mac+verify skipped. Error:
+  `tar: D\:\a\\dotfiles-template\\dotfiles-template/_interop: Cannot open: No such file or directory`
+  + `Error is not recoverable: exiting now` (exit 2). Cause: `INTEROP_WORK` =
+  `${{ github.workspace }}/_interop` expands to a Windows drive-letter path on the windows runner;
+  the steps run under `shell: bash` (Git-for-Windows MSYS bash) and MSYS `tar` can't open a `D:\…`
+  `-C` target (it mangles the drive colon as a remote host + the backslashes). `mkdir -p` did NOT
+  help. FIX (YAML only, applied to ALL 6 pack/unpack steps on ALL legs so behavior never diverges):
+  each step now resolves an MSYS-safe dir first —
+  `WORK="$INTEROP_WORK"; command -v cygpath >/dev/null 2>&1 && WORK="$(cygpath -u "$INTEROP_WORK")"`
+  (no-op on ubuntu/macos where cygpath is absent; `D:\a\…` -> `/d/a/…` on windows), then
+  `mkdir -p "$WORK"` before extract and `tar -C "$WORK" … origin.git` (relative members + `-C`,
+  never an absolute Windows member). interop_step.sh UNCHANGED (it invokes no tar; its git/file ops
+  accept native Windows paths). Reproduced the exact error locally under Git-Bash with a Windows-form
+  path and confirmed the cygpath conversion makes mkdir+unpack+repack succeed (symbolic HEAD
+  survives). Suites still green: `bash tests/run.sh bash` rc=0, `pwsh tests/run.ps1` rc=0. Committed
+  (NOT pushed); orchestrator re-verifies the chained interop workflow on CI. PITFALLS entry added
+  ("MSYS/Git-Bash tar can't open absolute D:\ drive-colon paths").
+
 ## CI status
-- Node 11 committed locally (interop.yml + interop_step.{sh,ps1} + pitfalls); NOT YET pushed/
-  CI-verified. The chained interop workflow's true value (L4.3 exec-bit seeded on ubuntu, the macOS
-  leg, and the real 3-OS round-trip) can ONLY run on CI — orchestrator pushes + watches it. Prior:
+- Node 11 CI FIX committed locally (Git-Bash-safe tar paths on the windows leg via cygpath -u +
+  relative `-C` + mkdir); NOT YET pushed/CI-verified — orchestrator re-runs the chained interop
+  workflow. Prior:
+- Node 11 committed locally (interop.yml + interop_step.{sh,ps1} + pitfalls); first CI run had the
+  windows leg RED (MSYS tar abs-path) — fixed above. The chained interop workflow's true value
+  (L4.3 exec-bit seeded on ubuntu, the macOS leg, the real 3-OS round-trip) can ONLY run on CI —
+  orchestrator pushes + watches it. Prior:
 - Node 10 committed locally (bootstrap + migrate + tests); NOT YET pushed/CI-verified. Prior:
 - Node 9 CI FIX #3 committed locally (force user-mode via `DOTFILES_TIMER_FORCE_USER` for the windows
   non-admin file asserts); NOT YET pushed/CI-verified (orchestrator re-verifies). Prior:

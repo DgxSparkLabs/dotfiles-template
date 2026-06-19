@@ -403,6 +403,28 @@ Traps hit during implementation. Read before editing the dispatcher/harness.
   `GIT_*_DATE` on both legs; assert newest-wins holds even when the older-dated leg pushes LAST
   (proves committer-date, not push order). The rewind drops the other (non-clash) files locally, but
   the tick's reconcile re-merges them from origin, so they survive.
+- **MSYS/Git-Bash `tar` cannot open an absolute Windows drive-colon path (`D:\…`) for `-C`** (node 11
+  interop, windows leg). The interop workflow sets `INTEROP_WORK: ${{ github.workspace }}/_interop`,
+  which on the WINDOWS runner expands to a drive-letter path like
+  `D:\a\dotfiles-template\dotfiles-template/_interop`. The pack/unpack steps run under `shell: bash`
+  (Git-for-Windows MSYS bash), and MSYS `tar` MANGLES that path — it reads the `D:` as a remote host
+  (the `:`) and the backslashes wrongly — so `tar -C "$INTEROP_WORK" …` dies with
+  `tar: D\:\a\…/_interop: Cannot open: No such file or directory` + `Error is not recoverable:
+  exiting now` (exit 2). `mkdir -p "$INTEROP_WORK"` does NOT help — the dir is created but tar still
+  can't resolve the colon-mangled `-C` target (verified: the dir existed, tar still failed). ubuntu
+  worked because GNU tar + a POSIX path. FIX (applied to EVERY pack AND unpack step on ALL legs, not
+  windows-only, so behavior never diverges): resolve an MSYS-safe work dir FIRST —
+  `WORK="$INTEROP_WORK"; command -v cygpath >/dev/null 2>&1 && WORK="$(cygpath -u "$INTEROP_WORK")"`
+  (`cygpath` exists ONLY under Git-for-Windows -> on ubuntu/macos this is a no-op and `WORK` stays the
+  POSIX path; on windows `D:\a\…/_interop` -> `/d/a/…/_interop`), then `mkdir -p "$WORK"` before every
+  extract and always `tar -C "$WORK" … .` with RELATIVE archive members (`-C` change-dir + the member
+  list `origin.git`), NEVER an absolute Windows member path. Verified locally under Git-Bash: feeding
+  a Windows-form `C:\…\_interop` reproduces the EXACT CI error; the `cygpath -u` conversion makes
+  mkdir + `tar -xf` + `tar -cf` all succeed and the bare repo's symbolic HEAD survives the round-trip.
+  (The interop_step.sh body itself uses `$INTEROP_WORK` only for git/printf/mkdir/file ops, which
+  Git-for-Windows accepts as native Windows paths — it invokes NO `tar`, so only the YAML steps needed
+  the cygpath conversion. `--force-local` also stops tar treating `:` as a host, but the
+  `cygpath -u` + relative-`-C` approach is cleaner and keeps the path form identical across legs.)
 - **Pass the bare `origin` between chained CI jobs as a TAR artifact, not the raw dir** (node 11). A
   `tar -C $WORK -cf origin.tar origin.git` preserves the bare repo's file modes AND its symbolic HEAD
   (`refs/heads/sync`); upload/download-artifact then hands it to the next leg, which untars and

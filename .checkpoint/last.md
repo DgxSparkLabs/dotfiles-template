@@ -2,6 +2,28 @@
 
 Branch: feat/sync-multi-repo-engine
 
+## MOST RECENT: Node 11 CI FIX (windows leg RED -> Git-Bash-safe tar paths; committed, NOT pushed)
+First CI run of the chained `interop` workflow: seed (ubuntu) PASSED, win (windows) FAILED, mac+verify
+skipped. Windows tar error:
+  `tar: D\:\a\\dotfiles-template\\dotfiles-template/_interop: Cannot open: No such file or directory`
+  `tar: Error is not recoverable: exiting now` (exit 2)
+ROOT CAUSE: `INTEROP_WORK: ${{ github.workspace }}/_interop` is a Windows drive-letter path on the
+windows runner; the pack/unpack steps run under `shell: bash` (Git-for-Windows MSYS bash) and MSYS
+`tar` cannot open a `D:\…` `-C` target (mangles the drive colon as a remote host + the backslashes).
+`mkdir -p` did NOT help.
+FIX (`.github/workflows/interop.yml` ONLY — all 6 pack/unpack steps, every leg, identical so behavior
+never diverges): each step resolves an MSYS-safe dir first:
+  `WORK="$INTEROP_WORK"; command -v cygpath >/dev/null 2>&1 && WORK="$(cygpath -u "$INTEROP_WORK")"`
+then `mkdir -p "$WORK"` before extract and `tar -C "$WORK" … origin.git` (relative members + `-C`,
+never an absolute Windows member). cygpath exists only under Git-for-Windows -> no-op on ubuntu/macos;
+`D:\a\…` -> `/d/a/…` on windows. interop_step.sh UNCHANGED (invokes no tar; its git/printf/mkdir/file
+ops accept native Windows paths). Repro'd the exact error locally under Git-Bash with a Windows-form
+path; cygpath conversion makes mkdir+unpack+repack succeed and the bare repo's symbolic HEAD survives.
+Suites green: `bash tests/run.sh bash` rc=0, `pwsh tests/run.ps1` rc=0. PITFALLS entry added.
+Orchestrator re-runs the chained interop workflow on CI.
+
+## PRIOR checkpoint below (Node 11 initial) ====================================================
+
 ## Last node DONE (committed locally; NOT yet pushed/CI-verified — orchestrator pushes + watches the new `interop` workflow across the chained OS legs)
 - **Node 11** — cross-OS interop chain (L4.1-L4.6). Proves the SAME engine + SAME repo round-trips
   across ubuntu/windows/macos through one shared origin. This is the only layer that proves

@@ -19,6 +19,19 @@ on:
 env:
   # All legs use the same work dir + the same single bash step script (interop_step.sh). On the
   # Windows leg the step runs under Git-Bash (shell: bash) — the same sh.exe the hooks use.
+  #
+  # IMPORTANT (windows leg / MSYS tar): on the windows runner $INTEROP_WORK expands to a Windows
+  # drive-letter path, e.g. `D:\a\dotfiles-template\dotfiles-template/_interop`. Git-for-Windows
+  # (MSYS) `tar` CANNOT open that form for `-C`: it mangles the drive colon (treats `D:` as a remote
+  # host) and the backslashes, so `tar -C "$INTEROP_WORK" …` dies with
+  #   `tar: D\:\a\…/_interop: Cannot open: No such file or directory` / `Error is not recoverable`.
+  # Every pack/unpack step below therefore resolves an MSYS-safe work dir FIRST:
+  #   WORK="$INTEROP_WORK"; command -v cygpath >/dev/null 2>&1 && WORK="$(cygpath -u "$INTEROP_WORK")"
+  # cygpath exists ONLY under Git-for-Windows, so on ubuntu/macos this is a no-op (WORK stays the
+  # POSIX path); the windows leg gets `/d/a/…/_interop`. We then `mkdir -p "$WORK"` before any
+  # extract and always use `tar -C "$WORK" … .` with RELATIVE archive members (a `-C` change-dir +
+  # `.`), never an absolute Windows member path. Result: identical, POSIX-safe tar behavior on all
+  # three legs (see PITFALLS "MSYS/Git-Bash tar can't open absolute D:\ drive-colon paths").
   INTEROP_WORK: ${{ github.workspace }}/_interop
 
 jobs:
@@ -36,7 +49,9 @@ jobs:
         run: bash tests/interop_step.sh seed
       - name: Pack origin
         shell: bash
-        run: tar -C "$INTEROP_WORK" -cf origin-seed.tar origin.git
+        run: |
+          WORK="$INTEROP_WORK"; command -v cygpath >/dev/null 2>&1 && WORK="$(cygpath -u "$INTEROP_WORK")"
+          tar -C "$WORK" -cf origin-seed.tar origin.git
       - name: Upload origin (after seed)
         uses: actions/upload-artifact@v4
         with:
@@ -61,7 +76,9 @@ jobs:
           name: origin-after-seed
       - name: Unpack origin
         shell: bash
-        run: mkdir -p "$INTEROP_WORK" && tar -C "$INTEROP_WORK" -xf origin-seed.tar
+        run: |
+          WORK="$INTEROP_WORK"; command -v cygpath >/dev/null 2>&1 && WORK="$(cygpath -u "$INTEROP_WORK")"
+          mkdir -p "$WORK" && tar -C "$WORK" -xf origin-seed.tar
       # Windows leg: edit text (CRLF on purpose -> must still normalize), nested path; do NOT touch
       # the exec script (no exec bit on Windows). Runs under Git-Bash == the hooks' sh.exe surface.
       - name: Windows leg (Git-Bash)
@@ -79,7 +96,9 @@ jobs:
         run: bash tests/interop_step.sh clash windows from-windows 2021-01-01T00:00:00
       - name: Pack origin
         shell: bash
-        run: tar -C "$INTEROP_WORK" -cf origin-win.tar origin.git
+        run: |
+          WORK="$INTEROP_WORK"; command -v cygpath >/dev/null 2>&1 && WORK="$(cygpath -u "$INTEROP_WORK")"
+          tar -C "$WORK" -cf origin-win.tar origin.git
       - name: Upload origin (after windows)
         uses: actions/upload-artifact@v4
         with:
@@ -104,7 +123,9 @@ jobs:
           name: origin-after-win
       - name: Unpack origin
         shell: bash
-        run: mkdir -p "$INTEROP_WORK" && tar -C "$INTEROP_WORK" -xf origin-win.tar
+        run: |
+          WORK="$INTEROP_WORK"; command -v cygpath >/dev/null 2>&1 && WORK="$(cygpath -u "$INTEROP_WORK")"
+          mkdir -p "$WORK" && tar -C "$WORK" -xf origin-win.tar
       - name: macOS leg
         shell: bash
         run: bash tests/interop_step.sh leg macos
@@ -115,7 +136,9 @@ jobs:
         run: bash tests/interop_step.sh clash macos from-macos 2022-01-01T00:00:00
       - name: Pack origin
         shell: bash
-        run: tar -C "$INTEROP_WORK" -cf origin-mac.tar origin.git
+        run: |
+          WORK="$INTEROP_WORK"; command -v cygpath >/dev/null 2>&1 && WORK="$(cygpath -u "$INTEROP_WORK")"
+          tar -C "$WORK" -cf origin-mac.tar origin.git
       - name: Upload origin (after macos)
         uses: actions/upload-artifact@v4
         with:
@@ -140,7 +163,9 @@ jobs:
           name: origin-after-mac
       - name: Unpack origin
         shell: bash
-        run: mkdir -p "$INTEROP_WORK" && tar -C "$INTEROP_WORK" -xf origin-mac.tar
+        run: |
+          WORK="$INTEROP_WORK"; command -v cygpath >/dev/null 2>&1 && WORK="$(cygpath -u "$INTEROP_WORK")"
+          mkdir -p "$WORK" && tar -C "$WORK" -xf origin-mac.tar
       # L4.1/L4.1-control/L4.2/L4.3/L4.6 over the full cross-OS history.
       - name: Verify round-trip (L4.1-L4.3, L4.6)
         shell: bash
