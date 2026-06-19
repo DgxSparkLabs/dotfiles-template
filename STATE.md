@@ -253,7 +253,59 @@ Branch: `feat/sync-multi-repo-engine`. Build order = the plan's "Build order —
   - Local: `bash tests/run.sh bash` overall rc=0 (migration 23/0/0); `pwsh tests/run.ps1` overall
     rc=0 (migration 23/0/0). No suite regressed. Committed (NOT pushed); orchestrator verifies CI.
 
+- **Node 11 (cross-OS interop chain, L4.1-L4.6)** — NEW `.github/workflows/interop.yml`: a
+  CHAINED 4-job workflow (`needs:` sequenced) seed (ubuntu) -> win (windows) -> mac (macos) ->
+  verify (ubuntu). The SAME bare `origin` repo travels leg-to-leg as a TAR artifact (unique name
+  per leg: origin-after-{seed,win,mac}; upload-artifact@v4 is immutable). Each leg checks out the
+  engine, installs uv (mirrors unit.yml), unpacks the prior origin, runs an OS-appropriate step,
+  re-packs + uploads. NEW `tests/interop_step.sh` — ONE bash script run on every leg (Git-Bash on
+  the windows leg = the hooks' sh.exe surface; a pwsh port would test a different path and prove
+  nothing about cross-OS sameness). Subcommands: `seed` (fresh origin + initial committed state),
+  `leg <os>` (clone machine wired to the engine + shared origin, edit text/nested/exec, run the
+  REAL `dotfiles -tick` to commit+reconcile+push), `verify` (fresh clone + L4 asserts), `clash`
+  /`verify-clash` (L4.5), `hookid` (L4.4). NEW `tests/interop_step.ps1` — thin wrapper that locates
+  Git-for-Windows bash (PREFERS Program Files\Git over the WSL System32 stub) and delegates.
+  How each L4.x is asserted (greppable RESULT banners; reads blobs via ls-tree+cat-file, never the
+  Git-for-Windows `<rev>:<path>` colon):
+  - **L4.1 round-trip** — the covered text.conf accumulates one line per OS; verify asserts all OS
+    edits present AND the blob has NO CR (no whole-file line-ending churn). CONTROL: `.gitattributes`
+    seeds `* text=auto` PLUS `legacy/raw.txt -text` (opt-out). raw.txt is seeded CRLF and STAYS CRLF
+    in the blob while text.conf is LF — the only difference is the `-text` attribute, proving
+    normalization is caused by `.gitattributes`, not luck (L4.1-control asserts the CRLF survives;
+    if it went LF the attribute would be decorative = FAIL).
+  - **L4.2 line endings** — text edited on Windows (CRLF written on purpose) is stored LF in the
+    repo blob (covered=LF asserted alongside control=CRLF so LF-storage is provably the
+    normalization, not a no-op). CR detected by COUNTING 0x0d bytes via `od` (Git-Bash `grep $'\r'`
+    falsely reports no-CR — see PITFALLS).
+  - **L4.3 file mode** — exec script seeded 100755 on the ubuntu seed leg; verify reads the TREE
+    mode (`ls-tree` first field, platform-independent) and asserts 100755 stable after the Windows
+    leg (which never rewrites it) + macOS leg (chmod +x). NAMED SKIP only on a LOCAL Windows
+    dry-run (core.fileMode=false there can't seed an exec bit) — runs for real on CI.
+  - **L4.4 hook identity under sh.exe** — the windows leg wires core.hooksPath to the engine stubs,
+    fires a REAL commit (runner via Git-for-Windows sh.exe), asserts `git rev-parse
+    --absolute-git-dir` basename == `interop`. Reuses node 8 dispatch; SKIP (named) if uv absent.
+  - **L4.5 cross-OS clash newest-wins** — windows writes the same line @2021 (older), macOS @2022
+    (newer) and pushes LAST; verify asserts macOS wins. A real clash is forced by rewinding each
+    clash leg's local branch to the seed commit before editing (divergent parents, not a
+    fast-forward). Proven date-based not push-order by the reverse case locally (older pushes last
+    -> still loses).
+  - **L4.6 path handling** — a nested `.config/interop/app/sub/dir/file` edited on each OS yields ONE
+    forward-slash entry in `ls-files` (no backslash paths, no duplicates); content from every OS
+    survives (L4.6-content).
+  - `unit.yml` is UNCHANGED (matrix intact); interop.yml is a separate workflow on push +
+    workflow_dispatch. interop_step.{sh,ps1} are NOT `test_*` so run.{sh,ps1} never auto-run them.
+  - Local (Windows host) FULL chain in exact workflow order (seed->leg win->hookid win->clash win->
+    leg mac->clash mac->verify->verify-clash): verify 5/0/1 (L4.3 the named Windows-seed SKIP),
+    verify-clash L4.5 PASS, hookid L4.4 PASS; reverse-clash also PASS (committer-date proof).
+    Existing suites UNBROKEN: `bash tests/run.sh bash` overall rc=0 (per-file 21/12/43/16+2skip/49/
+    23/36+1skip/13/9+3skip); `pwsh tests/run.ps1` overall rc=0 (18/12/43/16+2/49/23/36+1/13/9+1).
+    The true multi-OS chain (esp. L4.3 755 + macOS leg) runs only on CI — authored correct-by-
+    construction; orchestrator verifies.
+
 ## CI status
+- Node 11 committed locally (interop.yml + interop_step.{sh,ps1} + pitfalls); NOT YET pushed/
+  CI-verified. The chained interop workflow's true value (L4.3 exec-bit seeded on ubuntu, the macOS
+  leg, and the real 3-OS round-trip) can ONLY run on CI — orchestrator pushes + watches it. Prior:
 - Node 10 committed locally (bootstrap + migrate + tests); NOT YET pushed/CI-verified. Prior:
 - Node 9 CI FIX #3 committed locally (force user-mode via `DOTFILES_TIMER_FORCE_USER` for the windows
   non-admin file asserts); NOT YET pushed/CI-verified (orchestrator re-verifies). Prior:
@@ -271,9 +323,8 @@ Branch: `feat/sync-multi-repo-engine`. Build order = the plan's "Build order —
 - (Benign annotation: actions/checkout@v4 Node20 deprecation — bump to @v5 sometime.)
 
 ## Next
-- **Node 11** cross-OS interop chain (.gitattributes normalization, file modes, path handling,
-  sh.exe hook identity). Gate L4.1-L4.6 (chained ubuntu->windows->macos->ubuntu jobs).
-- Then node 12 (README full rewrite).
+- **Node 12** README full rewrite (layout, dispatcher grammar incl. `-x`==`--x`, per-repo config &
+  hooks, framing paragraph, migration, Syncthing caveat, same-line-loss warning).
 
 ## How to run tests
 - bash: `bash tests/run.sh bash`  (zsh: `zsh tests/run.sh zsh`)

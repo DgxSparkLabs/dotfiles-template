@@ -1,0 +1,151 @@
+name: interop
+on:
+  push:
+  workflow_dispatch:
+
+# L4 — cross-OS interop. The SAME bare `origin` repo round-trips across THREE OSes through a chain
+# of jobs sequenced with `needs:`; each leg downloads the prior leg's origin (an artifact tarball),
+# ticks the shared `interop` repo with the real engine, and re-uploads the updated origin for the
+# next leg. The final `verify` leg clones origin fresh and runs the L4.1-L4.6 assertions over the
+# accumulated cross-OS history. This is the ONLY layer that proves "mixing linux/windows/mac":
+# line-ending normalization (.gitattributes, with a control), file-mode stability, forward-slash
+# path handling, and hook identity under Git-for-Windows sh.exe.
+#
+# Chain:  seed (ubuntu) --> win (windows) --> mac (macos) --> verify (ubuntu)
+# Artifact names are UNIQUE per leg (upload-artifact@v4 artifacts are immutable); each consumer
+# downloads the producer's exact name. The origin is tarred at $INTEROP_WORK/origin.git so file
+# modes + symbolic HEAD survive the hop. INTEROP_WORK is a fixed, predictable per-job path.
+
+env:
+  # All legs use the same work dir + the same single bash step script (interop_step.sh). On the
+  # Windows leg the step runs under Git-Bash (shell: bash) — the same sh.exe the hooks use.
+  INTEROP_WORK: ${{ github.workspace }}/_interop
+
+jobs:
+  # ---------------------------------------------------------------------------------------
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Seed fresh origin (ubuntu)
+        shell: bash
+        run: bash tests/interop_step.sh seed
+      - name: Pack origin
+        shell: bash
+        run: tar -C "$INTEROP_WORK" -cf origin-seed.tar origin.git
+      - name: Upload origin (after seed)
+        uses: actions/upload-artifact@v4
+        with:
+          name: origin-after-seed
+          path: origin-seed.tar
+          retention-days: 1
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------------------
+  win:
+    needs: seed
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Download origin (from seed)
+        uses: actions/download-artifact@v4
+        with:
+          name: origin-after-seed
+      - name: Unpack origin
+        shell: bash
+        run: mkdir -p "$INTEROP_WORK" && tar -C "$INTEROP_WORK" -xf origin-seed.tar
+      # Windows leg: edit text (CRLF on purpose -> must still normalize), nested path; do NOT touch
+      # the exec script (no exec bit on Windows). Runs under Git-Bash == the hooks' sh.exe surface.
+      - name: Windows leg (Git-Bash)
+        shell: bash
+        run: bash tests/interop_step.sh leg windows
+      # L4.4 hook identity under Git-for-Windows sh.exe: a real commit on Windows runs the shared
+      # stub -> runner -> `git rev-parse --absolute-git-dir` basename must resolve to `interop`.
+      # This is the INFERRED assumption the plan calls out; the Windows leg is where it's proven.
+      - name: Windows hook identity (sh.exe)
+        shell: bash
+        run: bash tests/interop_step.sh hookid windows
+      # L4.5 cross-OS clash: windows writes the OLDER-dated same-line edit.
+      - name: Windows clash edit (older date)
+        shell: bash
+        run: bash tests/interop_step.sh clash windows from-windows 2021-01-01T00:00:00
+      - name: Pack origin
+        shell: bash
+        run: tar -C "$INTEROP_WORK" -cf origin-win.tar origin.git
+      - name: Upload origin (after windows)
+        uses: actions/upload-artifact@v4
+        with:
+          name: origin-after-win
+          path: origin-win.tar
+          retention-days: 1
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------------------
+  mac:
+    needs: win
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Download origin (from windows)
+        uses: actions/download-artifact@v4
+        with:
+          name: origin-after-win
+      - name: Unpack origin
+        shell: bash
+        run: mkdir -p "$INTEROP_WORK" && tar -C "$INTEROP_WORK" -xf origin-win.tar
+      - name: macOS leg
+        shell: bash
+        run: bash tests/interop_step.sh leg macos
+      # L4.5: macOS writes the NEWER-dated same-line edit and pushes LAST. Newest committer-date
+      # must still win at verify regardless of push order -> proves date-based, not push-order.
+      - name: macOS clash edit (newer date)
+        shell: bash
+        run: bash tests/interop_step.sh clash macos from-macos 2022-01-01T00:00:00
+      - name: Pack origin
+        shell: bash
+        run: tar -C "$INTEROP_WORK" -cf origin-mac.tar origin.git
+      - name: Upload origin (after macos)
+        uses: actions/upload-artifact@v4
+        with:
+          name: origin-after-mac
+          path: origin-mac.tar
+          retention-days: 1
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------------------
+  verify:
+    needs: mac
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Download origin (from macos)
+        uses: actions/download-artifact@v4
+        with:
+          name: origin-after-mac
+      - name: Unpack origin
+        shell: bash
+        run: mkdir -p "$INTEROP_WORK" && tar -C "$INTEROP_WORK" -xf origin-mac.tar
+      # L4.1/L4.1-control/L4.2/L4.3/L4.6 over the full cross-OS history.
+      - name: Verify round-trip (L4.1-L4.3, L4.6)
+        shell: bash
+        run: bash tests/interop_step.sh verify
+      # L4.5 newest-wins: macOS's edit (newer date) wins even though it/another OS pushed in between.
+      - name: Verify cross-OS clash (L4.5)
+        shell: bash
+        run: bash tests/interop_step.sh verify-clash from-macos

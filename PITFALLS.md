@@ -363,3 +363,50 @@ Traps hit during implementation. Read before editing the dispatcher/harness.
   $ROOT into `bare-repos/machine/` — the `.dotfiles` helpers are intentionally NOT carried over (the
   engine in `common/` replaces them). Detect legacy via `[ -f $ROOT/HEAD ] && [ -d $ROOT/objects ] &&
   git --git-dir=$ROOT rev-parse` so the NEW layout (no metadata at $ROOT) is never misread as legacy.
+
+- **Git-Bash `grep -q $'\r'` (and `grep -P '\r'`) FALSELY report no-match on a CRLF stream** (node 11
+  interop). grep treats the input as text and strips CR before matching, so a blob whose bytes are
+  literally `r a w 1 \r \n` reads as "no CR" to grep — even though `printf '%s' "$var" | od -c` shows
+  the `\r`. This silently broke the L4.1/L4.2 line-ending assertions (covered-vs-control). FIX: detect
+  CR by COUNTING 0x0d bytes via `od`: `printf '%s' "$s" | od -An -tx1 | tr ' ' '\n' | grep -c '^0d'`
+  (byte-exact, identical on linux/macos/git-bash). `tr -d '\r'` + string-compare also works; raw
+  `grep $'\r'` does not. (`has_cr()` in tests/interop_step.sh.)
+- **The exec bit (L4.3 file-mode) can only be SEEDED on a platform with core.fileMode true** (node 11
+  interop). Under Git-for-Windows, git's core.fileMode is false (the FS can't express the bit), so a
+  `chmod +x` + `git add` records 100644 — there is no 755 to keep "stable", so an L4.3 mode assert
+  cannot run there. SEED the exec script on the UBUNTU leg (fileMode true -> 100755 recorded); the
+  Windows leg then must NOT rewrite that file's CONTENT (re-adding UNCHANGED content under
+  fileMode=false preserves the recorded 755; a content change would re-stat and could drop it). Read
+  the mode from the TREE (`git ls-tree <rev> -- <path>` first field) not the working tree, so the
+  verifier is independent of the verifying platform's core.fileMode. Local Windows dry-runs take a
+  NAMED SKIP for L4.3 (no exec bit to seed); the real assert runs on the CI ubuntu seed+verify legs.
+- **A `.gitattributes` added in the SAME commit as the files it governs DOES take effect** (node 11
+  interop). `* text=auto` normalized text.conf to LF and `legacy/raw.txt -text` kept raw.txt's CRLF
+  verbatim — both in the very first seed commit that also adds `.gitattributes`. The `-text` opt-out
+  file is the CONTROL that proves normalization is caused by the attribute (covered=LF, control=CRLF
+  side by side), not by luck/platform. (If you ever see the control go LF too, the attribute is not
+  actually being applied — that's the load-bearing failure L4.1-control catches.)
+- **Cross-OS interop is ONE bash script run on all three legs (Git-Bash on Windows), not a pwsh port**
+  (node 11). L4 proves the SAME engine + SAME repo round-trips across OSes; a second pwsh
+  implementation of edit+tick+assert would test a different code path and so prove nothing about
+  sameness. `tests/interop_step.{seed,leg,verify,clash,verify-clash,hookid}` is the single source of
+  truth; `interop_step.ps1` is a thin wrapper that locates Git-for-Windows bash and delegates. The
+  workflow uses `shell: bash` directly. NOTE: on a default Windows box `bash` on PATH is the WSL stub
+  (`System32\bash.exe`) which runs a Linux distro or errors — the wrapper must PREFER
+  `$env:ProgramFiles\Git\bin\bash.exe` and exclude any `\System32\` bash.
+- **A real cross-OS same-line CLASH needs divergent parents, not a fast-forward** (node 11 L4.5). In a
+  sequential leg chain each leg clones the latest origin, so a naive edit just fast-forwards (no
+  conflict, no newest-wins to test). To force divergence, rewind the LOCAL branch to the seed commit
+  of the clash file (`git rev-list --max-parents=0 <branch> | tail -1`, then `reset --hard`) BEFORE
+  the edit, so this leg's commit and origin's (the other OS's edit) share only the seed base — the
+  engine's never-block resolver then actually runs and picks the newest committer-date. Pin
+  `GIT_*_DATE` on both legs; assert newest-wins holds even when the older-dated leg pushes LAST
+  (proves committer-date, not push order). The rewind drops the other (non-clash) files locally, but
+  the tick's reconcile re-merges them from origin, so they survive.
+- **Pass the bare `origin` between chained CI jobs as a TAR artifact, not the raw dir** (node 11). A
+  `tar -C $WORK -cf origin.tar origin.git` preserves the bare repo's file modes AND its symbolic HEAD
+  (`refs/heads/sync`); upload/download-artifact then hands it to the next leg, which untars and
+  operates on it. Set the origin's symbolic HEAD in the seed (`git --git-dir=origin symbolic-ref HEAD
+  refs/heads/<branch>`) so a fresh `git clone --branch` in the verify leg knows the branch.
+  upload-artifact@v4 artifacts are IMMUTABLE — use a UNIQUE name per leg (origin-after-{seed,win,mac})
+  and have each consumer download the producer's exact name; do not try to overwrite one shared name.
