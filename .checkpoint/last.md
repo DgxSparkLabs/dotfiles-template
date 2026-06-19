@@ -2,7 +2,7 @@
 
 Branch: feat/sync-multi-repo-engine
 
-## Last node DONE LOCALLY (NOT yet pushed/CI-verified — orchestrator pushes + verifies CI)
+## Last node DONE (CI-VERIFIED GREEN: run 27798493997, ubuntu+macos+windows ALL success; commit 0ac4d93)
 - **Node 10** — migration + bootstrap.{sh,ps1}. Fresh-machine setup + legacy->container migration.
   - NEW `bootstrap.{sh,ps1}` (engine root, ship in common/): plan "A. First-run setup" steps 1-4 in
     one run; leaves step 5 (verify + `dotfiles -config machine.tick on`) to the user (tick OFF).
