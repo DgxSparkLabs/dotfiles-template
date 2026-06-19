@@ -2,7 +2,12 @@
 
 Branch: feat/sync-multi-repo-engine
 
-## NODE 11 DONE — CI-VERIFIED GREEN: interop run 27799902325 (seed->win->mac->verify ALL success) + unit 27799902327 success. Commits 373d1fc impl -> 2fa8e66 (Git-Bash tar cygpath fix). FULL ubuntu<->windows<->macos round-trip PROVEN. NEXT = Node 12 (README rewrite, the LAST node).
+## NODE 12 DONE (LOCAL) — README full rewrite for the multi-repo engine. This is the LAST node; GOAL essentially met pending CI push. Docs-only (no code/test change). Tests still green: `bash tests/run.sh bash` rc=0, `pwsh tests/run.ps1` rc=0. Committed (NOT pushed) — orchestrator pushes + verifies CI.
+
+Node 12 covered (matched to SHIPPED behavior, no invented features): framing + Syncthing "when NOT"; on-disk layout + profile lines; first-run bootstrap + add-repos + verify-then-enable contract (tick OFF default); `dotfiles` grammar (bare=repo, dashed verb 1-or-2 dashes, repo-wins) + verb table (`-ls -config -tick -doctor -show -resolve -timer -update -migrate -help`) + real outputs; per-repo config defaults table + WHY + `[timer]`; per-repo+`_shared` hooks (runner via rev-parse --absolute-git-dir, stylua, uv/GfW prereqs); single timer (fan-out, subcommands, 3 backends, interval/jitter); managing files + `-doctor` overlap invariant w/ sample error; migration; caveats (secret ~60s push / same-line newest-wins+recoverable / gc-prune); "a day with it".
+HONESTY fixes vs plan Appendix F: `-ls` one-per-line; `-show`/`-resolve` use ACTUAL code output format; `-timer status` = NATIVE systemctl/schtasks output (the plan's pretty `timer:/autostart:/running:` block is NOT emitted by code). Also fixed stale githooks-runner/README.md (`.githooks/`->`common/githooks/`, `../../`->`../` link, invocation form).
+
+## PRIOR: NODE 11 DONE — CI-VERIFIED GREEN: interop run 27799902325 (seed->win->mac->verify ALL success) + unit 27799902327 success. Commits 373d1fc impl -> 2fa8e66 (Git-Bash tar cygpath fix). FULL ubuntu<->windows<->macos round-trip PROVEN.
 
 ## Node 11 CI FIX history (windows leg RED -> Git-Bash-safe tar paths)
 First CI run of the chained `interop` workflow: seed (ubuntu) PASSED, win (windows) FAILED, mac+verify

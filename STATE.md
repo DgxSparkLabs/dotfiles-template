@@ -322,7 +322,34 @@ Branch: `feat/sync-multi-repo-engine`. Build order = the plan's "Build order —
   (NOT pushed); orchestrator re-verifies the chained interop workflow on CI. PITFALLS entry added
   ("MSYS/Git-Bash tar can't open absolute D:\ drive-colon paths").
 
+- **Node 12 (README rewrite) — DONE locally** — fully rewrote `README.md` for the multi-repo
+  engine architecture, matched to shipped behavior (no invented features): one-paragraph
+  framing + "when NOT to use this / Syncthing"; on-disk `$HOME` layout + profile source/dot-
+  source lines; first-run setup (bootstrap) + adding repos + the verify-then-enable setup
+  contract (tick defaults OFF); the `dotfiles` command (grammar: bare token=repo passthrough,
+  dashed verb 1-or-2 dashes, repo-wins-over-verb; per-verb table `-ls -config -tick -doctor
+  -show -resolve -timer -update -migrate -help`) with representative outputs; per-repo config
+  (`~/.dotfiles/config` git-config syntax, defaults table + WHY: tick off / add tracked /
+  scoped -A, junk+malformed safe-refuse) + `[timer] interval`/`jitter`; per-repo + `_shared`
+  hooks (runner identifies repo via `git rev-parse --absolute-git-dir`, stylua example, uv +
+  GfW prereqs); the single timer (one unit fans out via `-tick`, subcommands, 3 backends,
+  interval/jitter); managing files (add/remove/move-ownership) + `-doctor` (overlap = load-
+  bearing invariant, sample error+fix); migration (`-migrate`: stop old timer → move git-dir
+  → wire hooksPath → swap aliases, work-tree never moves); caveats (secret-safety ~60s push,
+  same-line-loss newest-wins/recoverable, gc-prune reaps losers); condensed "a day with it".
+  HONESTY corrections vs the plan's Appendix F: `-ls` prints one repo per line (not space-
+  separated); `-show`/`-resolve` outputs use the ACTUAL code format (tab-separated logline;
+  `clash in repo <repo>  loser=<sha>`); `-timer status` documented as NATIVE scheduler output
+  (systemctl/schtasks), NOT the plan's invented pretty `timer:/autostart:/running:` block
+  which the code does not emit. Also fixed stale `githooks-runner/README.md` (path
+  `.githooks/` -> `common/githooks/`, broken `../../README.md` link -> `../README.md`,
+  dispatcher invocation form). Tests unbroken: `bash tests/run.sh bash` rc=0 (9/0/3 timer),
+  `pwsh tests/run.ps1` rc=0 (9/0/1 timer). Docs node only — NO code/test changes. This is the
+  LAST node; GOAL essentially met pending CI. Committed (NOT pushed); orchestrator pushes +
+  verifies CI.
+
 ## CI status
+- Node 12 (README rewrite) committed locally; docs-only, tests rc=0 both shells. Prior:
 - Node 11 CI FIX committed locally (Git-Bash-safe tar paths on the windows leg via cygpath -u +
   relative `-C` + mkdir); NOT YET pushed/CI-verified — orchestrator re-runs the chained interop
   workflow. Prior:
