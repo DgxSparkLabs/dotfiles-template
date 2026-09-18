@@ -1,12 +1,17 @@
 #!/usr/bin/env pwsh
-# dotfiles-update.ps1: One-way master->machine propagation (pwsh twin of dotfiles-update.sh).
-# Fetches origin/master and merges it into the current machine branch.
+# dotfiles-update.ps1: One-way system->machine propagation (pwsh twin of dotfiles-update.sh).
+# Fetches the named system baseline and merges it into the current machine branch.
 #
-# master holds the system baseline; machines adopt system improvements via this
-# one-way update. It is conflict-free in practice because system files (tracked
-# on master) don't overlap the user files a machine edits. If a conflict DOES
-# appear, the system/user partition was violated: we abort loudly rather than
-# leave a half-merged work-tree.
+# `system` (override with git config dotfiles.systemRef) holds the system
+# baseline; machines adopt system improvements via this one-way update. It is
+# conflict-free in practice because system files (tracked on the system ref)
+# don't overlap the user files a machine edits. If a conflict DOES appear, the
+# system/user partition was violated: we abort loudly rather than leave a
+# half-merged work-tree.
+#
+# The system ref is NEVER GitHub's default branch and is never resolved via
+# origin/HEAD. Tools that cannot pick a branch write the default branch; those
+# writes must not flow into every machine.
 #
 # Manual by default. Pass -Auto for unattended use (e.g. a scheduled wrapper):
 # the merge semantics are identical; -Auto only signals intent and is reserved
@@ -25,12 +30,15 @@ if ($Help) {
     Write-Host @"
 Usage: pwsh dotfiles-update.ps1 [-Auto]
 
-Pulls system improvements from origin/master into this machine's branch:
-  git --git-dir=$GitDir --work-tree=$WorkTree fetch origin master:refs/remotes/origin/master
-  git --git-dir=$GitDir --work-tree=$WorkTree merge --no-edit origin/master
+Pulls system improvements from origin/system into this machine's branch:
+  git --git-dir=$GitDir --work-tree=$WorkTree fetch origin system:refs/remotes/origin/system
+  git --git-dir=$GitDir --work-tree=$WorkTree merge --no-edit origin/system
 
   (default)  Manual run.
   -Auto      Opt-in unattended run (same merge; intended for scheduled wrappers).
+
+The system ref is a named branch (default: system; override with
+``git config dotfiles.systemRef``), not GitHub's default branch.
 
 On conflict the merge is aborted and the command exits non-zero — your work-tree
 is left clean. Resolve by reconciling the system/user file partition.
@@ -38,18 +46,31 @@ is left clean. Resolve by reconciling the system/user file partition.
     exit 0
 }
 
-Write-Host "dotfiles update: fetching origin/master (auto=$([int][bool]$Auto))"
-# Explicit refspec updates the refs/remotes/origin/master tracking ref. A bare
+function Resolve-SystemRef {
+    $ref = (& git @gitArgs config --get dotfiles.systemRef 2>$null | Out-String).Trim()
+    if (-not $ref) { $ref = 'system' }
+    if ($ref -eq '' -or $ref -eq 'HEAD' -or $ref -eq 'origin/HEAD') {
+        [Console]::Error.WriteLine("dotfiles update: refusing system ref '$ref' (that is the default branch).")
+        [Console]::Error.WriteLine("  Set a named baseline: git --git-dir `"$GitDir`" config dotfiles.systemRef system")
+        exit 1
+    }
+    return $ref
+}
+
+$SystemRef = Resolve-SystemRef
+
+Write-Host "dotfiles update: fetching origin/$SystemRef (auto=$([int][bool]$Auto))"
+# Explicit refspec updates the refs/remotes/origin/<system> tracking ref. A bare
 # clone (the README setup) starts with NO remote-tracking refs and a refspec-less
-# `fetch origin master` only writes FETCH_HEAD — leaving `merge origin/master` to
-# fail with "not something we can merge". The refspec makes origin/master real.
-& git @gitArgs fetch origin "master:refs/remotes/origin/master"
+# `fetch origin system` only writes FETCH_HEAD — leaving `merge origin/system` to
+# fail with "not something we can merge". The refspec makes origin/<system> real.
+& git @gitArgs fetch origin "${SystemRef}:refs/remotes/origin/$SystemRef"
 if ($LASTEXITCODE -ne 0) {
     Write-Error "dotfiles update: fetch failed (check SSH agent / network / remote)"
     exit 1
 }
 
-& git @gitArgs merge --no-edit origin/master
+& git @gitArgs merge --no-edit "origin/$SystemRef"
 if ($LASTEXITCODE -ne 0) {
     # Distinguish a real merge conflict (merge started, MERGE_HEAD exists) from a
     # merge that never began (e.g. refused / unrelated histories / bad ref). Only
@@ -67,8 +88,8 @@ if ($LASTEXITCODE -ne 0) {
     $msg += "========================================================================"
     $msg += "  DOTFILES UPDATE CONFLICT"
     $msg += ""
-    $msg += "  Merging origin/master hit a conflict. This means a system file on"
-    $msg += "  master overlaps a file this machine has edited — the system/user"
+    $msg += "  Merging origin/$SystemRef hit a conflict. This means a system file on"
+    $msg += "  $SystemRef overlaps a file this machine has edited — the system/user"
     $msg += "  partition has been violated."
     $msg += ""
     $msg += "  Conflicting files:"
@@ -86,4 +107,4 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-Write-Host "dotfiles update: merged origin/master cleanly."
+Write-Host "dotfiles update: merged origin/$SystemRef cleanly."

@@ -116,6 +116,23 @@ else
        "git clone --bare <your-dotfiles-remote> \"$GIT_DIR\""
 fi
 
+# 5b. HEAD is a machine branch (not default / system) ───────────────────────
+# GitHub's default (main/master) and the named system baseline are reserved.
+# Daily work on those refs re-hijacks the default or pollutes every machine.
+head_branch="$(dotfiles symbolic-ref --short HEAD 2>/dev/null || true)"
+sysref_cfg="$(dotfiles config --get dotfiles.systemRef 2>/dev/null || true)"
+sysref_cfg="${sysref_cfg:-system}"
+case "$head_branch" in
+  main|master|system|"")
+    shown="${head_branch:-<detached>}"
+    info "HEAD is '$shown' (reserved/default); daily work belongs on a machine branch"
+    ;;
+  *)
+    pass "HEAD is machine branch '$head_branch'"
+    ;;
+esac
+info "system baseline ref = $sysref_cfg (git config dotfiles.systemRef)"
+
 # 6. user_hooks (info only) ─────────────────────────────────────────────────
 user_hooks_example="$RUNNER_DIR/dotfiles_githooks/user_hooks.example"
 user_hooks_active="$RUNNER_DIR/dotfiles_githooks/user_hooks.py"
@@ -161,6 +178,13 @@ else
            "git --git-dir \"$GIT_DIR\" remote add origin <your-dotfiles-remote>"
     elif dotfiles ls-remote --heads "$remote" >/dev/null 2>&1; then
       pass "remote '$remote' reachable (push/fetch network + auth OK)"
+      sysref_cfg="${sysref_cfg:-system}"
+      if dotfiles ls-remote --heads "$remote" "$sysref_cfg" | grep -q .; then
+        pass "system baseline '$sysref_cfg' exists on '$remote'"
+      else
+        fail "no '$sysref_cfg' branch on '$remote' (system baseline is not the default branch)" \
+             "git push origin HEAD:$sysref_cfg  — do not use GitHub's default branch as the baseline"
+      fi
     else
       fail "remote '$remote' unreachable (network down or SSH agent locked)" \
            "check connectivity / unlock SSH agent, or re-run with --skip-network"

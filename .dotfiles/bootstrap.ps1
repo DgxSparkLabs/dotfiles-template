@@ -73,11 +73,21 @@ if (-not $branchProvided) {
     }
 }
 
+# Reserved names are GitHub's default (main/master) and the system baseline.
+# Instantiations must not park daily work — or the merge source — on default.
+$reserved = @('main', 'master', 'system', 'HEAD')
+if ($reserved -contains $Branch) {
+    Write-Error "bootstrap.ps1: '$Branch' is reserved (GitHub default or the system baseline). Pick a machine-specific name (e.g. laptop-home). The default branch must stay free for tools that cannot be configured."
+    exit 1
+}
+
 Write-Host "bootstrap.ps1: repo=$Repo branch=$Branch"
 
 git clone --bare $Repo "$HOME/.dotfiles"
 function dotfiles { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" @args }
 dotfiles config --local status.showUntrackedFiles no
+# Named baseline for `dotfiles update`. Never origin/HEAD / the default branch.
+dotfiles config --local dotfiles.systemRef system
 
 # Git pathspecs (the `.` below) are CWD-relative. The bare repo's work-tree is
 # $HOME, so cd there before checking out — otherwise running bootstrap from any

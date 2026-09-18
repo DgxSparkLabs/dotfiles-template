@@ -113,12 +113,30 @@ if [ "$branch_set" -eq 0 ]; then
   fi
 fi
 
+# Reserved names are GitHub's default (main/master) and the system baseline.
+# Instantiations must not park daily work — or the merge source — on default.
+is_reserved_branch() {
+  case "$1" in
+    main|master|system|HEAD) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if is_reserved_branch "$BRANCH"; then
+  echo "bootstrap.sh: '$BRANCH' is reserved (GitHub default or the system baseline)." >&2
+  echo "  Pick a machine-specific name (e.g. laptop-home). The default branch" >&2
+  echo "  must stay free for tools that cannot be configured." >&2
+  exit 1
+fi
+
 echo "bootstrap.sh: repo=$REPO branch=$BRANCH"
 
 git clone --bare "$REPO" "$HOME/.dotfiles"
 # A function, not an alias: aliases are not expanded in non-interactive scripts.
 dotfiles() { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" "$@"; }
 dotfiles config --local status.showUntrackedFiles no
+# Named baseline for `dotfiles update`. Never origin/HEAD / the default branch.
+dotfiles config --local dotfiles.systemRef system
 
 # Git pathspecs (the `.` below) are CWD-relative. The bare repo's work-tree is
 # $HOME, so cd there before checking out — otherwise running bootstrap from any

@@ -34,15 +34,25 @@ You don't need to fork on GitHub. Clone directly, set up your own repo, then bri
 
 ### 1. Create your own GitHub repo from this template
 
+Do **not** pin or rename GitHub's default branch. Many tools (clone with no `-b`, the GitHub file editor, Actions without a branch filter, Codespaces, GitHub Desktop) only write the default branch and cannot be configured. That branch is a landing page — not the merge source, and not a machine.
+
+Create an empty GitHub repo first (its default stays `main`), then push the template onto a **named** `system` branch:
+
 ```bash
+# Empty repo whose default branch GitHub already set to main
+gh repo create <YOU>/dotfiles --private --empty
+
 # Clone this template
 git clone https://github.com/DgxSparkLabs/dotfiles-template.git dotfiles
 cd dotfiles
 
-# Point it at your own repo
 git remote remove origin
 git remote add origin https://github.com/<YOU>/dotfiles.git
-git push -u origin master
+
+# First push becomes default if the repo is still empty — push main first so
+# the host default stays a dump/landing zone, then the named baseline.
+git push -u origin HEAD:main
+git push origin HEAD:system
 ```
 
 Or if you prefer a fresh history (no template commits):
@@ -54,10 +64,13 @@ rm -rf .git
 git init
 git add .
 git commit -m "Initial dotfiles setup"
-git branch -M master    # pin to master regardless of your git default
 git remote add origin https://github.com/<YOU>/dotfiles.git
-git push -u origin master
+# Do NOT `git branch -M master`. Leave git/GitHub's default alone.
+git push -u origin HEAD:main
+git push origin HEAD:system
 ```
+
+`system` is what `dotfiles update` merges from. `main` is whatever unconfigurable tools will touch. They start as the same tree; that is fine — later `main` edits do not flow to machines.
 
 > **Why not fork?** Forks stay linked to the upstream repo on GitHub, which can clutter your profile and creates an implicit relationship you probably don't want for personal dotfiles.
 
@@ -66,9 +79,10 @@ git push -u origin master
 ```bash
 git clone --bare git@github.com:<YOU>/dotfiles.git $HOME/.dotfiles
 dotfiles config --local status.showUntrackedFiles no
+dotfiles config --local dotfiles.systemRef system
 
-# Populate $HOME with master's tracked files
-dotfiles checkout master -- .gitignore .dotfiles/
+# Populate $HOME from the named system baseline (not GitHub's default)
+dotfiles checkout system -- .gitignore .dotfiles/
 dotfiles add -u . && dotfiles commit -m "Init dotfiles"
 ```
 
@@ -80,9 +94,11 @@ dotfiles status
 
 ### 3. Create this machine's branch
 
-This template uses **one branch per machine**. `master` is the **system baseline** — the template's portable defaults (the `.gitignore`, the git-hook stubs, the auto-commit timer, the wrapper definitions). It is **not** a shared bucket for your personal content; nothing you add on a machine branch is meant to travel back into `master`.
+This template uses **one branch per machine**. `system` is the **system baseline** — the template's portable defaults (the `.gitignore`, the git-hook stubs, the auto-commit timer, the wrapper definitions). It is **not** GitHub's default branch and **not** a shared bucket for your personal content; nothing you add on a machine branch is meant to travel back into `system`.
 
-The flow is **one-way**: `master` → your machine branch, pulled with `dotfiles update`. Your machine branch is where *your* dotfiles live, and they stay there. See [The partition contract](#the-partition-contract-system-vs-user) below for what belongs where.
+The flow is **one-way**: `system` → your machine branch, pulled with `dotfiles update`. Your machine branch is where *your* dotfiles live, and they stay there. See [The partition contract](#the-partition-contract-system-vs-user) below for what belongs where.
+
+Do not name a machine `main`, `master`, or `system` — those are reserved (host default and the merge source).
 
 Pick a short, descriptive name for each machine:
 
@@ -95,22 +111,22 @@ Pick a short, descriptive name for each machine:
 | `server-home`, `vps-prod`        | Remote servers                                 |
 
 
-> Confirm `dotfiles status` is clean from step 2 before proceeding — otherwise any staged deletions follow into the new branch and your first commit there will silently delete those files from master.
+> Confirm `dotfiles status` is clean from step 2 before proceeding — otherwise any staged deletions follow into the new branch and your first commit there will silently delete those files from `system`.
 
 ```bash
-dotfiles checkout -b <machine-name> master
+dotfiles checkout -b <machine-name> system
 dotfiles push -u origin <machine-name>
 
 # Suggestion for windows
-dotfiles checkout -b $((Get-WmiObject -class Win32_BaseBoard).product) master
+dotfiles checkout -b $((Get-WmiObject -class Win32_BaseBoard).product) system
 dotfiles push -u origin $((Get-WmiObject -class Win32_BaseBoard).product)
 
 # Suggestion for linux
-dotfiles checkout -b $(cat /sys/class/dmi/id/board_name) master
+dotfiles checkout -b $(cat /sys/class/dmi/id/board_name) system
 dotfiles push -u origin $(cat /sys/class/dmi/id/board_name)
 
 # Suggestion for WSL
-dotfiles checkout -b WSL master
+dotfiles checkout -b WSL system
 dotfiles push -u origin WSL
 ```
 
@@ -137,7 +153,7 @@ dotfiles commit -m "Add someapp config"
 dotfiles push                 # pushes to <machine-name> on origin
 ```
 
-For changes you want every machine to inherit, see [Multiple machines](#multiple-machines) — those go on `master`.
+For changes you want every machine to inherit, see [Multiple machines](#multiple-machines) — those go on `system`.
 
 ### Auto-commit (optional)
 
@@ -254,6 +270,8 @@ Checks performed:
 - `status.showUntrackedFiles` == `no`
 - the `githooks-runner` venv is synced
 - the work-tree is clean (no uncommitted tracked changes)
+- HEAD is a machine branch, not `main`/`master`/`system` (INFO)
+- the configured system baseline ref (`dotfiles.systemRef`, default `system`) (INFO)
 - `user_hooks.example` / `user_hooks.py` activation state (INFO only)
 - auto-commit timer state (INFO only)
 - remote push/fetch reachability — network + SSH auth (skippable)
@@ -369,33 +387,34 @@ dotfiles commit -m "Unignore ~/bin"
 
 ## Multiple machines
 
-Use **one branch per machine**. `master` is the **system baseline** — template-level defaults, not a shared content branch. Each machine branch is created off `master` once (step 3) and from then on tracks `master` **one-way**: you pull baseline improvements down with `dotfiles update`; you never push your machine's content up into `master`.
+Use **one branch per machine**. `system` is the **system baseline** — template-level defaults, not a shared content branch, and **not** GitHub's default branch. Each machine branch is created off `system` once (step 3) and from then on tracks `system` **one-way**: you pull baseline improvements down with `dotfiles update`; you never push your machine's content up into `system`.
 
 ```bash
-# Pull system-baseline improvements from master onto this machine
+# Pull system-baseline improvements from system onto this machine
 dotfiles update
 ```
 
-`dotfiles update` fast-forwards the system baseline from `master` onto your current machine branch without touching your machine-local content. Confirm the work-tree is clean first (`dotfiles status`, or [`dotfiles doctor`](#health-check-dotfiles-doctor-optional)) — the same precaution called out in [step 3](#3-create-this-machines-branch).
+`dotfiles update` fast-forwards the system baseline from `system` onto your current machine branch without touching your machine-local content. Confirm the work-tree is clean first (`dotfiles status`, or [`dotfiles doctor`](#health-check-dotfiles-doctor-optional)) — the same precaution called out in [step 3](#3-create-this-machines-branch).
 
 ### The partition contract (system vs user)
 
-The whole model rests on a clean split between **system** content (lives on `master`, flows down to every machine) and **user** content (lives only on your machine branch, never travels):
+The whole model rests on a clean split between **system** content (lives on `system`, flows down to every machine) and **user** content (lives only on your machine branch, never travels). GitHub's default branch is a third role: a landing page for tools that cannot pick a branch. It is never the merge source.
 
 | Concern | Lives in | Owned by | Travels via |
 | --- | --- | --- | --- |
-| System baseline — `.gitignore`, hook stubs, timer, wrappers | `master` | the template | `dotfiles update` (master → machine, one-way) |
+| GitHub / unconfigurable tools | default branch (`main`) | the host | nowhere — do not merge this into machines |
+| System baseline — `.gitignore`, hook stubs, timer, wrappers | `system` | the template | `dotfiles update` (`system` → machine, one-way) |
 | Your custom git-hook logic | `user_hooks.py` | you | stays on your machine branch |
 | Your git identity (name, email, signing key) | `~/.gitconfig.local`, pulled in via `[include]` | you | stays on your machine branch |
 | Your dotfiles, app configs, machine tweaks | your machine branch | you | stays on your machine branch |
 
-This is why `master` only ever flows **down**. Custom hook behavior goes in **`user_hooks.py`** (a user extension point the system dispatcher calls — see [Git hooks](#git-hooks-optional)) rather than editing the tracked stubs, so a `dotfiles update` never clobbers it. Identity stays in **`~/.gitconfig.local`**, pulled in by a plain `[include]` directive in the tracked `.gitconfig`, so each machine's identity is local and untracked.
+This is why `system` only ever flows **down**, and why it is a **named** ref rather than "whatever the host calls default". Custom hook behavior goes in **`user_hooks.py`** (a user extension point the system dispatcher calls — see [Git hooks](#git-hooks-optional)) rather than editing the tracked stubs, so a `dotfiles update` never clobbers it. Identity stays in **`~/.gitconfig.local`**, pulled in by a plain `[include]` directive in the tracked `.gitconfig`, so each machine's identity is local and untracked.
 
-> **Sharing content between machines is deliberately out of scope here.** `master` is *not* the channel for that. Machine-to-machine sharing of *user* content is the planned **`sync`** feature — a separate, opt-in flow — not something you achieve by committing personal files to `master`.
+> **Sharing content between machines is deliberately out of scope here.** `system` is *not* the channel for that, and neither is the default branch. Machine-to-machine sharing of *user* content is the planned **`sync`** feature — a separate, opt-in flow — not something you achieve by committing personal files to `system`.
 
 ### System updates (`dotfiles-update`)
 
-`dotfiles update` (covered above under [Multiple machines](#multiple-machines)) is the one-way master→machine propagation path: it fetches `origin/master` and merges the latest **system baseline** onto your machine branch in one step. Because you never edit system files, the merge is normally clean. If it *does* conflict (a system file overlaps one you edited), the command prints a loud message, lists the conflicting files, **aborts the merge** (leaving your work-tree clean), and exits non-zero.
+`dotfiles update` (covered above under [Multiple machines](#multiple-machines)) is the one-way system→machine propagation path: it fetches `origin/system` (or `git config dotfiles.systemRef`) and merges the latest **system baseline** onto your machine branch in one step. It never reads `origin/HEAD` or GitHub's default branch. Because you never edit system files, the merge is normally clean. If it *does* conflict (a system file overlaps one you edited), the command prints a loud message, lists the conflicting files, **aborts the merge** (leaving your work-tree clean), and exits non-zero.
 
 It runs manually by default; pass `--auto` (Linux) / `-Auto` (Windows) for unattended use from a scheduled wrapper (same merge semantics).
 
@@ -416,7 +435,7 @@ function dotfiles-update { pwsh "$HOME\.dotfiles\dotfiles-update.ps1" @args }
 Then on any platform:
 
 ```text
-dotfiles-update            # fetch origin/master + merge into this machine's branch
+dotfiles-update            # fetch origin/system + merge into this machine's branch
 dotfiles-update --auto     # same, opt-in unattended (Windows: -Auto)
 ```
 

@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
-# dotfiles-update.sh: One-way master->machine propagation.
-# Fetches origin/master and merges it into the current machine branch.
+# dotfiles-update.sh: One-way system->machine propagation.
+# Fetches the named system baseline and merges it into the current machine branch.
 #
-# master holds the system baseline; machines adopt system improvements via this
-# one-way update. It is conflict-free in practice because system files (tracked
-# on master) don't overlap the user files a machine edits. If a conflict DOES
-# appear, the system/user partition was violated: we abort loudly rather than
-# leave a half-merged work-tree.
+# `system` (override with git config dotfiles.systemRef) holds the system
+# baseline; machines adopt system improvements via this one-way update. It is
+# conflict-free in practice because system files (tracked on the system ref)
+# don't overlap the user files a machine edits. If a conflict DOES appear, the
+# system/user partition was violated: we abort loudly rather than leave a
+# half-merged work-tree.
+#
+# The system ref is NEVER GitHub's default branch and is never resolved via
+# origin/HEAD. Tools that cannot pick a branch write the default branch; those
+# writes must not flow into every machine.
 #
 # Manual by default. Pass --auto for unattended use (e.g. a scheduled wrapper):
 # the merge semantics are identical; --auto only signals intent and is reserved
@@ -21,16 +26,32 @@ dotgit() {
   git --git-dir="$GIT_DIR" --work-tree="$WORK_TREE" "$@"
 }
 
+# Named baseline only. Empty / HEAD / origin/HEAD would re-hijack the default.
+# Resolved in this shell (not a command-substitution subshell) so a bad ref
+# actually exits the script.
+SYSTEM_REF="$(dotgit config --get dotfiles.systemRef 2>/dev/null || true)"
+SYSTEM_REF="${SYSTEM_REF:-system}"
+case "$SYSTEM_REF" in
+  ''|HEAD|origin/HEAD)
+    echo "dotfiles update: refusing system ref '$SYSTEM_REF' (that is the default branch)." >&2
+    echo "  Set a named baseline: git --git-dir=\"$GIT_DIR\" config dotfiles.systemRef system" >&2
+    exit 1
+    ;;
+esac
+
 print_usage() {
   cat <<EOF
 Usage: $0 [--auto]
 
-Pulls system improvements from origin/master into this machine's branch:
-  git --git-dir=$GIT_DIR --work-tree=$WORK_TREE fetch origin master:refs/remotes/origin/master
-  git --git-dir=$GIT_DIR --work-tree=$WORK_TREE merge --no-edit origin/master
+Pulls system improvements from origin/$SYSTEM_REF into this machine's branch:
+  git --git-dir=$GIT_DIR --work-tree=$WORK_TREE fetch origin $SYSTEM_REF:refs/remotes/origin/$SYSTEM_REF
+  git --git-dir=$GIT_DIR --work-tree=$WORK_TREE merge --no-edit origin/$SYSTEM_REF
 
   (default)  Manual run.
   --auto     Opt-in unattended run (same merge; intended for scheduled wrappers).
+
+The system ref is a named branch (default: system; override with
+\`git config dotfiles.systemRef\`), not GitHub's default branch.
 
 On conflict the merge is aborted and the command exits non-zero — your work-tree
 is left clean. Resolve by reconciling the system/user file partition.
@@ -46,17 +67,17 @@ for arg in "$@"; do
   esac
 done
 
-echo "dotfiles update: fetching origin/master (auto=$AUTO)"
-# Explicit refspec updates the refs/remotes/origin/master tracking ref. A bare
+echo "dotfiles update: fetching origin/$SYSTEM_REF (auto=$AUTO)"
+# Explicit refspec updates the refs/remotes/origin/<system> tracking ref. A bare
 # clone (the README setup) starts with NO remote-tracking refs and a refspec-less
-# `fetch origin master` only writes FETCH_HEAD — leaving `merge origin/master` to
-# fail with "not something we can merge". The refspec makes origin/master real.
-if ! dotgit fetch origin "master:refs/remotes/origin/master"; then
+# `fetch origin system` only writes FETCH_HEAD — leaving `merge origin/system` to
+# fail with "not something we can merge". The refspec makes origin/<system> real.
+if ! dotgit fetch origin "$SYSTEM_REF:refs/remotes/origin/$SYSTEM_REF"; then
   echo "dotfiles update: fetch failed (check SSH agent / network / remote)" >&2
   exit 1
 fi
 
-if ! dotgit merge --no-edit origin/master; then
+if ! dotgit merge --no-edit "origin/$SYSTEM_REF"; then
   # Distinguish a real merge conflict (merge started, MERGE_HEAD exists) from a
   # merge that never began (e.g. refused / unrelated histories / bad ref). Only a
   # conflict warrants the loud partition message + `merge --abort`; aborting when
@@ -71,8 +92,8 @@ if ! dotgit merge --no-edit origin/master; then
   echo "========================================================================" >&2
   echo "  DOTFILES UPDATE CONFLICT" >&2
   echo "" >&2
-  echo "  Merging origin/master hit a conflict. This means a system file on" >&2
-  echo "  master overlaps a file this machine has edited — the system/user" >&2
+  echo "  Merging origin/$SYSTEM_REF hit a conflict. This means a system file on" >&2
+  echo "  $SYSTEM_REF overlaps a file this machine has edited — the system/user" >&2
   echo "  partition has been violated." >&2
   echo "" >&2
   echo "  Conflicting files:" >&2
@@ -89,4 +110,4 @@ if ! dotgit merge --no-edit origin/master; then
   exit 1
 fi
 
-echo "dotfiles update: merged origin/master cleanly."
+echo "dotfiles update: merged origin/$SYSTEM_REF cleanly."
