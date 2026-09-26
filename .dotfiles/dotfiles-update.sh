@@ -9,9 +9,9 @@
 # system/user partition was violated: we abort loudly rather than leave a
 # half-merged work-tree.
 #
-# The system ref is NEVER GitHub's default branch and is never resolved via
-# origin/HEAD. Tools that cannot pick a branch write the default branch; those
-# writes must not flow into every machine.
+# The system ref is a branch name (default: system; git config dotfiles.systemRef).
+# Any name `git check-ref-format --branch` accepts is allowed. It is never
+# resolved via origin/HEAD, which aliases whatever the host calls default.
 #
 # Manual by default. Pass --auto for unattended use (e.g. a scheduled wrapper):
 # the merge semantics are identical; --auto only signals intent and is reserved
@@ -26,18 +26,24 @@ dotgit() {
   git --git-dir="$GIT_DIR" --work-tree="$WORK_TREE" "$@"
 }
 
-# Named baseline only. Empty / HEAD / origin/HEAD would re-hijack the default.
+# Named baseline. Empty / HEAD / origin/HEAD alias the host default, so they
+# are not branch names. Any other string git accepts as a branch is allowed.
 # Resolved in this shell (not a command-substitution subshell) so a bad ref
 # actually exits the script.
 SYSTEM_REF="$(dotgit config --get dotfiles.systemRef 2>/dev/null || true)"
 SYSTEM_REF="${SYSTEM_REF:-system}"
 case "$SYSTEM_REF" in
   ''|HEAD|origin/HEAD)
-    echo "dotfiles update: refusing system ref '$SYSTEM_REF' (that is the default branch)." >&2
-    echo "  Set a named baseline: git --git-dir=\"$GIT_DIR\" config dotfiles.systemRef system" >&2
+    echo "dotfiles update: refusing system ref '$SYSTEM_REF' (not a branch name; it aliases the host default)." >&2
+    echo "  Set a branch name: git --git-dir=\"$GIT_DIR\" config dotfiles.systemRef system" >&2
     exit 1
     ;;
 esac
+if ! git check-ref-format --branch "$SYSTEM_REF" >/dev/null 2>&1; then
+  echo "dotfiles update: '$SYSTEM_REF' is not a valid branch name." >&2
+  echo "  Set one with: git --git-dir=\"$GIT_DIR\" config dotfiles.systemRef <name>" >&2
+  exit 1
+fi
 
 print_usage() {
   cat <<EOF
@@ -50,8 +56,8 @@ Pulls system improvements from origin/$SYSTEM_REF into this machine's branch:
   (default)  Manual run.
   --auto     Opt-in unattended run (same merge; intended for scheduled wrappers).
 
-The system ref is a named branch (default: system; override with
-\`git config dotfiles.systemRef\`), not GitHub's default branch.
+The system ref is whatever \`git config dotfiles.systemRef\` names (default: system).
+Any valid branch name is allowed. origin/HEAD is never followed.
 
 On conflict the merge is aborted and the command exits non-zero — your work-tree
 is left clean. Resolve by reconciling the system/user file partition.

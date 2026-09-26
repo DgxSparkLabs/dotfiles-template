@@ -9,9 +9,9 @@
 # system/user partition was violated: we abort loudly rather than leave a
 # half-merged work-tree.
 #
-# The system ref is NEVER GitHub's default branch and is never resolved via
-# origin/HEAD. Tools that cannot pick a branch write the default branch; those
-# writes must not flow into every machine.
+# The system ref is a branch name (default: system; git config dotfiles.systemRef).
+# Any name `git check-ref-format --branch` accepts is allowed. It is never
+# resolved via origin/HEAD, which aliases whatever the host calls default.
 #
 # Manual by default. Pass -Auto for unattended use (e.g. a scheduled wrapper):
 # the merge semantics are identical; -Auto only signals intent and is reserved
@@ -37,8 +37,8 @@ Pulls system improvements from origin/system into this machine's branch:
   (default)  Manual run.
   -Auto      Opt-in unattended run (same merge; intended for scheduled wrappers).
 
-The system ref is a named branch (default: system; override with
-``git config dotfiles.systemRef``), not GitHub's default branch.
+The system ref is whatever ``git config dotfiles.systemRef`` names (default: system).
+Any valid branch name is allowed. origin/HEAD is never followed.
 
 On conflict the merge is aborted and the command exits non-zero — your work-tree
 is left clean. Resolve by reconciling the system/user file partition.
@@ -50,8 +50,14 @@ function Resolve-SystemRef {
     $ref = (& git @gitArgs config --get dotfiles.systemRef 2>$null | Out-String).Trim()
     if (-not $ref) { $ref = 'system' }
     if ($ref -eq '' -or $ref -eq 'HEAD' -or $ref -eq 'origin/HEAD') {
-        [Console]::Error.WriteLine("dotfiles update: refusing system ref '$ref' (that is the default branch).")
-        [Console]::Error.WriteLine("  Set a named baseline: git --git-dir `"$GitDir`" config dotfiles.systemRef system")
+        [Console]::Error.WriteLine("dotfiles update: refusing system ref '$ref' (not a branch name; it aliases the host default).")
+        [Console]::Error.WriteLine("  Set a branch name: git --git-dir `"$GitDir`" config dotfiles.systemRef system")
+        exit 1
+    }
+    & git check-ref-format --branch $ref *> $null
+    if ($LASTEXITCODE -ne 0) {
+        [Console]::Error.WriteLine("dotfiles update: '$ref' is not a valid branch name.")
+        [Console]::Error.WriteLine("  Set one with: git --git-dir `"$GitDir`" config dotfiles.systemRef <name>")
         exit 1
     }
     return $ref

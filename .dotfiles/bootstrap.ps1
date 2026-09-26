@@ -9,12 +9,15 @@
 #   -Branch <name>  (optional) branch to check out. If omitted, the machine name
 #                   is auto-detected and you are prompted to confirm it or type
 #                   a different branch.
+#   -SystemRef <name> (optional) baseline branch `dotfiles update` merges from.
+#                   Any valid branch name. Default: system.
 #   -y / -Yes       (optional) auto-accept the auto-detected branch without
 #                   prompting (useful for non-interactive / scripted setup).
 #
 # Usage:
 #   pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git
 #   pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git -Branch my-laptop
+#   pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git -SystemRef master
 #   pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git -y
 #
 # Branch resolution precedence:
@@ -28,6 +31,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Repo,
     [string]$Branch,
+    [string]$SystemRef = 'system',
     [Alias('y')]
     [switch]$Yes
 )
@@ -73,21 +77,33 @@ if (-not $branchProvided) {
     }
 }
 
-# Reserved names are GitHub's default (main/master) and the system baseline.
-# Instantiations must not park daily work — or the merge source — on default.
-$reserved = @('main', 'master', 'system', 'HEAD')
-if ($reserved -contains $Branch) {
-    Write-Error "bootstrap.ps1: '$Branch' is reserved (GitHub default or the system baseline). Pick a machine-specific name (e.g. laptop-home). The default branch must stay free for tools that cannot be configured."
+# Any name git accepts as a branch is fine. HEAD / origin/HEAD are not branch
+# names; they alias whatever the host calls default, so update must not follow them.
+function Test-BranchName([string]$Name) {
+    git check-ref-format --branch $Name *> $null
+    return ($LASTEXITCODE -eq 0)
+}
+if (-not (Test-BranchName $Branch)) {
+    Write-Error "bootstrap.ps1: '$Branch' is not a valid branch name (machine branch)."
+    exit 1
+}
+if (-not (Test-BranchName $SystemRef)) {
+    Write-Error "bootstrap.ps1: '$SystemRef' is not a valid branch name (system ref)."
     exit 1
 }
 
-Write-Host "bootstrap.ps1: repo=$Repo branch=$Branch"
+Write-Host "bootstrap.ps1: repo=$Repo branch=$Branch system-ref=$SystemRef"
 
 git clone --bare $Repo "$HOME/.dotfiles"
 function dotfiles { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" @args }
 dotfiles config --local status.showUntrackedFiles no
-# Named baseline for `dotfiles update`. Never origin/HEAD / the default branch.
-dotfiles config --local dotfiles.systemRef system
+# Named baseline for `dotfiles update`. Not resolved from origin/HEAD.
+dotfiles config --local dotfiles.systemRef $SystemRef
+$baseline = @(& git --git-dir="$HOME/.dotfiles/" ls-remote --heads origin $SystemRef 2>$null | Where-Object { $_ })
+if ($baseline.Count -eq 0) {
+    Write-Error "bootstrap.ps1: baseline branch '$SystemRef' is not on the remote. Push it (git push origin HEAD:$SystemRef) or pass -SystemRef <name>."
+    exit 1
+}
 
 # Git pathspecs (the `.` below) are CWD-relative. The bare repo's work-tree is
 # $HOME, so cd there before checking out — otherwise running bootstrap from any

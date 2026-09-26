@@ -121,20 +121,23 @@ if ($LASTEXITCODE -eq 0) {
         "git clone --bare <your-dotfiles-remote> `"$GitDir`""
 }
 
-# 5b. HEAD is a machine branch (not default / system) ───────────────────────
-# GitHub's default (main/master) and the named system baseline are reserved.
-# Daily work on those refs re-hijacks the default or pollutes every machine.
+# 5b. configured baseline ref ───────────────────────────────────────────────
+# Any branch name is allowed. Report it; fail only when it is not a branch name.
 $headBranch = (Invoke-Dotfiles symbolic-ref --short HEAD 2>$null | Out-String).Trim()
 $sysrefCfg = (Invoke-Dotfiles config --get dotfiles.systemRef 2>$null | Out-String).Trim()
 if (-not $sysrefCfg) { $sysrefCfg = 'system' }
-$reservedHeads = @('main', 'master', 'system', '')
-if ($reservedHeads -contains $headBranch) {
-    $shown = if ($headBranch) { $headBranch } else { '<detached>' }
-    Write-Info "HEAD is '$shown' (reserved/default); daily work belongs on a machine branch"
+if ($headBranch) {
+    Write-Info "HEAD is '$headBranch'"
 } else {
-    Write-Pass "HEAD is machine branch '$headBranch'"
+    Write-Info "HEAD is detached"
 }
-Write-Info "system baseline ref = $sysrefCfg (git config dotfiles.systemRef)"
+& git check-ref-format --branch $sysrefCfg *> $null
+if ($LASTEXITCODE -eq 0) {
+    Write-Info "system baseline ref = $sysrefCfg (git config dotfiles.systemRef)"
+} else {
+    Write-Fail "dotfiles.systemRef '$sysrefCfg' is not a valid branch name" `
+        "git --git-dir `"$GitDir`" config dotfiles.systemRef system"
+}
 
 # 6. user_hooks (info only) ─────────────────────────────────────────────────
 $userHooksExample = "$RunnerDir\dotfiles_githooks\user_hooks.example"
@@ -197,8 +200,8 @@ if ($SkipNetwork) {
                 if ($sysOut.Count -gt 0) {
                     Write-Pass "system baseline '$sysrefCfg' exists on '$remote'"
                 } else {
-                    Write-Fail "no '$sysrefCfg' branch on '$remote' (system baseline is not the default branch)" `
-                        "git push origin HEAD:$sysrefCfg  — do not use GitHub's default branch as the baseline"
+                    Write-Fail "no '$sysrefCfg' branch on '$remote'" `
+                        "git push origin HEAD:$sysrefCfg   or set dotfiles.systemRef to the baseline branch"
                 }
             } else {
                 Write-Fail "remote '$remote' unreachable (network down or SSH agent locked)" `

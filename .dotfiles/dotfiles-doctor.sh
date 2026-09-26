@@ -116,22 +116,22 @@ else
        "git clone --bare <your-dotfiles-remote> \"$GIT_DIR\""
 fi
 
-# 5b. HEAD is a machine branch (not default / system) ───────────────────────
-# GitHub's default (main/master) and the named system baseline are reserved.
-# Daily work on those refs re-hijacks the default or pollutes every machine.
+# 5b. configured baseline ref ───────────────────────────────────────────────
+# Any branch name is allowed. Report it; fail only when it is not a branch name.
 head_branch="$(dotfiles symbolic-ref --short HEAD 2>/dev/null || true)"
 sysref_cfg="$(dotfiles config --get dotfiles.systemRef 2>/dev/null || true)"
 sysref_cfg="${sysref_cfg:-system}"
-case "$head_branch" in
-  main|master|system|"")
-    shown="${head_branch:-<detached>}"
-    info "HEAD is '$shown' (reserved/default); daily work belongs on a machine branch"
-    ;;
-  *)
-    pass "HEAD is machine branch '$head_branch'"
-    ;;
-esac
-info "system baseline ref = $sysref_cfg (git config dotfiles.systemRef)"
+if [ -n "$head_branch" ]; then
+  info "HEAD is '$head_branch'"
+else
+  info "HEAD is detached"
+fi
+if git check-ref-format --branch "$sysref_cfg" >/dev/null 2>&1; then
+  info "system baseline ref = $sysref_cfg (git config dotfiles.systemRef)"
+else
+  fail "dotfiles.systemRef '$sysref_cfg' is not a valid branch name" \
+       "git --git-dir \"$GIT_DIR\" config dotfiles.systemRef system"
+fi
 
 # 6. user_hooks (info only) ─────────────────────────────────────────────────
 user_hooks_example="$RUNNER_DIR/dotfiles_githooks/user_hooks.example"
@@ -182,8 +182,8 @@ else
       if dotfiles ls-remote --heads "$remote" "$sysref_cfg" | grep -q .; then
         pass "system baseline '$sysref_cfg' exists on '$remote'"
       else
-        fail "no '$sysref_cfg' branch on '$remote' (system baseline is not the default branch)" \
-             "git push origin HEAD:$sysref_cfg  — do not use GitHub's default branch as the baseline"
+        fail "no '$sysref_cfg' branch on '$remote'" \
+             "git push origin HEAD:$sysref_cfg   or set dotfiles.systemRef to the baseline branch"
       fi
     else
       fail "remote '$remote' unreachable (network down or SSH agent locked)" \

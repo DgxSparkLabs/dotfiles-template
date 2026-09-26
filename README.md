@@ -34,30 +34,33 @@ You don't need to fork on GitHub. Clone directly, set up your own repo, then bri
 
 ### 1. Create your own GitHub repo from this template
 
-Do **not** pin or rename GitHub's default branch. Many tools (clone with no `-b`, the GitHub file editor, Actions without a branch filter, Codespaces, GitHub Desktop) only write the default branch and cannot be configured. That branch is a landing page — not the merge source, and not a machine.
+`dotfiles update` merges a **named branch** (`dotfiles.systemRef`, default `system`). It does not follow `origin/HEAD`. Any name `git check-ref-format --branch` accepts is allowed, including `main` or `master`. Tools that cannot pick a branch still write whatever GitHub calls default; that only becomes the merge source if you set `dotfiles.systemRef` to that name.
 
-Create an empty GitHub repo first (its default stays `main`), then push the template onto a **named** `system` branch:
+Create an empty GitHub repo, then push the template onto the baseline branch you chose:
 
 ```bash
-# Empty repo whose default branch GitHub already set to main
+# Any valid branch name. Existing baselines that already live on master:
+#   SYSTEM_REF=master
+SYSTEM_REF=system
+
 gh repo create <YOU>/dotfiles --private --empty
 
-# Clone this template
 git clone https://github.com/DgxSparkLabs/dotfiles-template.git dotfiles
 cd dotfiles
 
 git remote remove origin
 git remote add origin https://github.com/<YOU>/dotfiles.git
 
-# First push becomes default if the repo is still empty — push main first so
-# the host default stays a dump/landing zone, then the named baseline.
+# Push the host default first when the repo is empty, so the first push does
+# not become the only branch. Then push the baseline under the name you chose.
 git push -u origin HEAD:main
-git push origin HEAD:system
+git push origin "HEAD:$SYSTEM_REF"
 ```
 
 Or if you prefer a fresh history (no template commits):
 
 ```bash
+SYSTEM_REF=system
 git clone https://github.com/DgxSparkLabs/dotfiles-template.git dotfiles
 cd dotfiles
 rm -rf .git
@@ -65,24 +68,24 @@ git init
 git add .
 git commit -m "Initial dotfiles setup"
 git remote add origin https://github.com/<YOU>/dotfiles.git
-# Do NOT `git branch -M master`. Leave git/GitHub's default alone.
 git push -u origin HEAD:main
-git push origin HEAD:system
+git push origin "HEAD:$SYSTEM_REF"
 ```
 
-`system` is what `dotfiles update` merges from. `main` is whatever unconfigurable tools will touch. They start as the same tree; that is fine — later `main` edits do not flow to machines.
+`$SYSTEM_REF` is what `dotfiles update` merges from. Pass the same name to bootstrap (`--system-ref` / `-SystemRef`). An instance that already uses `master` as the baseline keeps that branch and sets `dotfiles.systemRef` to `master`.
 
 > **Why not fork?** Forks stay linked to the upstream repo on GitHub, which can clutter your profile and creates an implicit relationship you probably don't want for personal dotfiles.
 
 ### 2. Set up the bare repo on this machine
 
 ```bash
+SYSTEM_REF=system   # or master, or any other valid branch name
 git clone --bare git@github.com:<YOU>/dotfiles.git $HOME/.dotfiles
 dotfiles config --local status.showUntrackedFiles no
-dotfiles config --local dotfiles.systemRef system
+dotfiles config --local dotfiles.systemRef "$SYSTEM_REF"
 
-# Populate $HOME from the named system baseline (not GitHub's default)
-dotfiles checkout system -- .gitignore .dotfiles/
+# Populate $HOME from the baseline branch
+dotfiles checkout "$SYSTEM_REF" -- .gitignore .dotfiles/
 dotfiles add -u . && dotfiles commit -m "Init dotfiles"
 ```
 
@@ -94,11 +97,9 @@ dotfiles status
 
 ### 3. Create this machine's branch
 
-This template uses **one branch per machine**. `system` is the **system baseline** — the template's portable defaults (the `.gitignore`, the git-hook stubs, the auto-commit timer, the wrapper definitions). It is **not** GitHub's default branch and **not** a shared bucket for your personal content; nothing you add on a machine branch is meant to travel back into `system`.
+This template uses **one branch per machine**. The baseline branch (`$SYSTEM_REF`, default `system`) holds the template's portable defaults (the `.gitignore`, the git-hook stubs, the auto-commit timer, the wrapper definitions). It is not a shared bucket for your personal content; nothing you add on a machine branch is meant to travel back into the baseline.
 
-The flow is **one-way**: `system` → your machine branch, pulled with `dotfiles update`. Your machine branch is where *your* dotfiles live, and they stay there. See [The partition contract](#the-partition-contract-system-vs-user) below for what belongs where.
-
-Do not name a machine `main`, `master`, or `system` — those are reserved (host default and the merge source).
+The flow is **one-way**: baseline → your machine branch, pulled with `dotfiles update`. Your machine branch is where *your* dotfiles live, and they stay there. Any valid branch name is fine for either role. See [The partition contract](#the-partition-contract-system-vs-user) below for what belongs where.
 
 Pick a short, descriptive name for each machine:
 
@@ -111,22 +112,22 @@ Pick a short, descriptive name for each machine:
 | `server-home`, `vps-prod`        | Remote servers                                 |
 
 
-> Confirm `dotfiles status` is clean from step 2 before proceeding — otherwise any staged deletions follow into the new branch and your first commit there will silently delete those files from `system`.
+> Confirm `dotfiles status` is clean from step 2 before proceeding — otherwise any staged deletions follow into the new branch and your first commit there will silently delete those files from the baseline.
 
 ```bash
-dotfiles checkout -b <machine-name> system
+dotfiles checkout -b <machine-name> "$SYSTEM_REF"
 dotfiles push -u origin <machine-name>
 
 # Suggestion for windows
-dotfiles checkout -b $((Get-WmiObject -class Win32_BaseBoard).product) system
+dotfiles checkout -b $((Get-WmiObject -class Win32_BaseBoard).product) $SYSTEM_REF
 dotfiles push -u origin $((Get-WmiObject -class Win32_BaseBoard).product)
 
 # Suggestion for linux
-dotfiles checkout -b $(cat /sys/class/dmi/id/board_name) system
+dotfiles checkout -b $(cat /sys/class/dmi/id/board_name) "$SYSTEM_REF"
 dotfiles push -u origin $(cat /sys/class/dmi/id/board_name)
 
 # Suggestion for WSL
-dotfiles checkout -b WSL system
+dotfiles checkout -b WSL "$SYSTEM_REF"
 dotfiles push -u origin WSL
 ```
 
@@ -153,7 +154,7 @@ dotfiles commit -m "Add someapp config"
 dotfiles push                 # pushes to <machine-name> on origin
 ```
 
-For changes you want every machine to inherit, see [Multiple machines](#multiple-machines) — those go on `system`.
+For changes you want every machine to inherit, see [Multiple machines](#multiple-machines) — those go on the baseline branch (`dotfiles.systemRef`).
 
 ### Auto-commit (optional)
 
@@ -270,8 +271,8 @@ Checks performed:
 - `status.showUntrackedFiles` == `no`
 - the `githooks-runner` venv is synced
 - the work-tree is clean (no uncommitted tracked changes)
-- HEAD is a machine branch, not `main`/`master`/`system` (INFO)
-- the configured system baseline ref (`dotfiles.systemRef`, default `system`) (INFO)
+- current HEAD (INFO)
+- `dotfiles.systemRef` is a valid branch name (default `system`) (INFO, or FAIL if the configured string is not a branch name)
 - `user_hooks.example` / `user_hooks.py` activation state (INFO only)
 - auto-commit timer state (INFO only)
 - remote push/fetch reachability — network + SSH auth (skippable)
@@ -387,34 +388,39 @@ dotfiles commit -m "Unignore ~/bin"
 
 ## Multiple machines
 
-Use **one branch per machine**. `system` is the **system baseline** — template-level defaults, not a shared content branch, and **not** GitHub's default branch. Each machine branch is created off `system` once (step 3) and from then on tracks `system` **one-way**: you pull baseline improvements down with `dotfiles update`; you never push your machine's content up into `system`.
+Use **one branch per machine**. The baseline branch holds template-level defaults. Its name is `dotfiles.systemRef` (default `system`; any valid branch name, including `main` or `master`). Each machine branch is created off that baseline once (step 3). After that, `dotfiles update` pulls baseline improvements down onto the machine branch.
 
 ```bash
-# Pull system-baseline improvements from system onto this machine
+# Pull baseline improvements onto this machine
 dotfiles update
 ```
 
-`dotfiles update` fast-forwards the system baseline from `system` onto your current machine branch without touching your machine-local content. Confirm the work-tree is clean first (`dotfiles status`, or [`dotfiles doctor`](#health-check-dotfiles-doctor-optional)) — the same precaution called out in [step 3](#3-create-this-machines-branch).
+`dotfiles update` merges `origin/<dotfiles.systemRef>` onto your current branch. It follows that config, which defaults to `system`. It does not follow `origin/HEAD`. Confirm the work-tree is clean first (`dotfiles status`, or [`dotfiles doctor`](#health-check-dotfiles-doctor-optional)) — the same precaution called out in [step 3](#3-create-this-machines-branch).
+
+If this instance already keeps the baseline on `master`:
+
+```bash
+dotfiles config --local dotfiles.systemRef master
+```
 
 ### The partition contract (system vs user)
 
-The whole model rests on a clean split between **system** content (lives on `system`, flows down to every machine) and **user** content (lives only on your machine branch, never travels). GitHub's default branch is a third role: a landing page for tools that cannot pick a branch. It is never the merge source.
+**System** content lives on the baseline branch and flows down to every machine. **User** content lives on the machine branch. The branch names are yours; `dotfiles update` uses the configured name.
 
 | Concern | Lives in | Owned by | Travels via |
 | --- | --- | --- | --- |
-| GitHub / unconfigurable tools | default branch (`main`) | the host | nowhere — do not merge this into machines |
-| System baseline — `.gitignore`, hook stubs, timer, wrappers | `system` | the template | `dotfiles update` (`system` → machine, one-way) |
+| System baseline — `.gitignore`, hook stubs, timer, wrappers | `dotfiles.systemRef` (default `system`) | the template | `dotfiles update` (baseline → machine, one-way) |
 | Your custom git-hook logic | `user_hooks.py` | you | stays on your machine branch |
 | Your git identity (name, email, signing key) | `~/.gitconfig.local`, pulled in via `[include]` | you | stays on your machine branch |
 | Your dotfiles, app configs, machine tweaks | your machine branch | you | stays on your machine branch |
 
-This is why `system` only ever flows **down**, and why it is a **named** ref rather than "whatever the host calls default". Custom hook behavior goes in **`user_hooks.py`** (a user extension point the system dispatcher calls — see [Git hooks](#git-hooks-optional)) rather than editing the tracked stubs, so a `dotfiles update` never clobbers it. Identity stays in **`~/.gitconfig.local`**, pulled in by a plain `[include]` directive in the tracked `.gitconfig`, so each machine's identity is local and untracked.
+Custom hook behavior goes in **`user_hooks.py`** (a user extension point the system dispatcher calls — see [Git hooks](#git-hooks-optional)) rather than editing the tracked stubs, so a `dotfiles update` leaves it alone when that file is only on the machine branch. Identity stays in **`~/.gitconfig.local`**, pulled in by a plain `[include]` directive in the tracked `.gitconfig`, so each machine's identity is local and untracked.
 
-> **Sharing content between machines is deliberately out of scope here.** `system` is *not* the channel for that, and neither is the default branch. Machine-to-machine sharing of *user* content is the planned **`sync`** feature — a separate, opt-in flow — not something you achieve by committing personal files to `system`.
+> **Sharing content between machines is a separate flow.** Machine-to-machine sharing of *user* content is the planned **`sync`** feature. Committing personal files onto the baseline branch sends them to every machine on the next `dotfiles update`.
 
 ### System updates (`dotfiles-update`)
 
-`dotfiles update` (covered above under [Multiple machines](#multiple-machines)) is the one-way system→machine propagation path: it fetches `origin/system` (or `git config dotfiles.systemRef`) and merges the latest **system baseline** onto your machine branch in one step. It never reads `origin/HEAD` or GitHub's default branch. Because you never edit system files, the merge is normally clean. If it *does* conflict (a system file overlaps one you edited), the command prints a loud message, lists the conflicting files, **aborts the merge** (leaving your work-tree clean), and exits non-zero.
+`dotfiles update` fetches `origin/<dotfiles.systemRef>` and merges that baseline onto your machine branch. Because you keep system-file edits on the baseline, the merge is normally clean. If it conflicts (a baseline file overlaps one you edited on the machine), the command prints a loud message, lists the conflicting files, **aborts the merge** (leaving your work-tree clean), and exits non-zero.
 
 It runs manually by default; pass `--auto` (Linux) / `-Auto` (Windows) for unattended use from a scheduled wrapper (same merge semantics).
 
@@ -435,7 +441,7 @@ function dotfiles-update { pwsh "$HOME\.dotfiles\dotfiles-update.ps1" @args }
 Then on any platform:
 
 ```text
-dotfiles-update            # fetch origin/system + merge into this machine's branch
+dotfiles-update            # fetch the configured baseline + merge into this machine's branch
 dotfiles-update --auto     # same, opt-in unattended (Windows: -Auto)
 ```
 
@@ -463,6 +469,7 @@ Both take the repo URL and (optionally) the branch as **command-line parameters*
 | --- | --- | --- |
 | repo (`--repo` / `-Repo`) | yes (fails fast if missing) | — |
 | branch (`--branch` / `-Branch`) | no | auto-detected machine name, **confirmed interactively** — Linux `/sys/class/dmi/id/board_name`, WSL → `WSL`, Windows `(Get-WmiObject Win32_BaseBoard).product`, else hostname |
+| baseline (`--system-ref` / `-SystemRef`) | no | `system` — any valid branch name; written to `dotfiles.systemRef`. The branch must already exist on the remote |
 | auto-accept (`-y` / `--yes` / `-Yes`) | no | off — when set, auto-accepts the auto-detected branch without prompting |
 
 If you don't pass a branch, the script auto-detects this machine's name and asks you to confirm it (press Enter) or type a different branch before applying. In a non-interactive context (no TTY, e.g. CI) it errors and tells you to pass the branch explicitly, rather than hanging on the prompt. Input comes only from command-line arguments — there are no environment-variable fallbacks.
@@ -477,6 +484,8 @@ On a fresh machine you only have the script (copy it over, or fetch it from your
 bash bootstrap.sh --repo git@github.com:<YOU>/dotfiles.git
 # you'll be asked to confirm the detected branch, or:
 bash bootstrap.sh --repo git@github.com:<YOU>/dotfiles.git --branch my-laptop
+# baseline branch other than the default name "system" (must already exist on the remote):
+bash bootstrap.sh --repo git@github.com:<YOU>/dotfiles.git --branch my-laptop --system-ref master
 # auto-accept the detected branch (no prompt):
 bash bootstrap.sh --repo git@github.com:<YOU>/dotfiles.git -y
 # positional form also works:
@@ -489,11 +498,13 @@ bash bootstrap.sh git@github.com:<YOU>/dotfiles.git my-laptop
 pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git
 # you'll be asked to confirm the detected branch, or:
 pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git -Branch my-laptop
+# baseline branch other than the default name "system":
+pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git -Branch my-laptop -SystemRef master
 # auto-accept the detected branch (no prompt):
 pwsh bootstrap.ps1 -Repo git@github.com:<YOU>/dotfiles.git -y
 ```
 
-Conflicting OS-default files are backed up to `*.bak` before checkout, so nothing is lost. After checkout the scripts set `status.showUntrackedFiles no`. Open a new shell (or reload your profile) so the `dotfiles` wrapper is available.
+Conflicting OS-default files are backed up to `*.bak` before checkout, so nothing is lost. After checkout the scripts set `status.showUntrackedFiles no` and `dotfiles.systemRef` to `--system-ref` (default `system`). The machine branch and the baseline name only have to be valid branch names. Open a new shell (or reload your profile) so the `dotfiles` wrapper is available.
 
 ---
 
