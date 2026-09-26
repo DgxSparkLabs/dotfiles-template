@@ -49,12 +49,13 @@ jobs:
         if: runner.os == 'Linux' || runner.os == 'macOS'
         run: |
           set -euo pipefail
-          git config --global init.defaultBranch master
+          # Do not hijack git's global default branch. Instance default is
+          # `main` (landing); the named baseline is `system`.
           dotfiles() { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" "$@"; }
 
           # cd to $HOME — git pathspecs are CWD-relative, and GHA puts us inside
           # the workspace which is a subdir of $HOME, so `.gitignore` would
-          # otherwise resolve to `work/.../...gitignore` in master's tree. Real
+          # otherwise resolve to `work/.../...gitignore` in system's tree. Real
           # users running the README from a normal shell are at $HOME or
           # elsewhere outside the workspace, so this matches their environment.
           cd "$HOME"
@@ -64,12 +65,15 @@ jobs:
           # remote that received this workspace's content via git push protocol.
           echo "[validate-timer] git init --bare /tmp/dotfiles-remote.git"
           git init --bare /tmp/dotfiles-remote.git
-          echo "[validate-timer] push workspace HEAD -> /tmp/dotfiles-remote.git refs/heads/master"
-          git -C "$GITHUB_WORKSPACE" push /tmp/dotfiles-remote.git "HEAD:refs/heads/master"
-          # A machine uses its OWN branch, never the shared master baseline. Push a
-          # distinct machine branch ("ci-machine") so the bootstrap smoke test can
-          # check it out via --branch and prove the argument actually took effect
-          # (a value != master that we can assert on HEAD).
+          echo "[validate-timer] push workspace HEAD -> main (instance default)"
+          git -C "$GITHUB_WORKSPACE" push /tmp/dotfiles-remote.git "HEAD:refs/heads/main"
+          echo "[validate-timer] push workspace HEAD -> system (named baseline)"
+          git -C "$GITHUB_WORKSPACE" push /tmp/dotfiles-remote.git "HEAD:refs/heads/system"
+          git --git-dir=/tmp/dotfiles-remote.git symbolic-ref HEAD refs/heads/main
+          # A machine uses its OWN branch, never the shared system baseline and
+          # never GitHub's default. Push a distinct machine branch ("ci-machine")
+          # so the bootstrap smoke test can check it out via --branch and prove
+          # the argument actually took effect (a value != main/system).
           echo "[validate-timer] push workspace HEAD -> /tmp/dotfiles-remote.git refs/heads/ci-machine"
           git -C "$GITHUB_WORKSPACE" push /tmp/dotfiles-remote.git "HEAD:refs/heads/ci-machine"
 
@@ -79,14 +83,22 @@ jobs:
 
           echo "[validate-timer] dotfiles config status.showUntrackedFiles no"
           dotfiles config status.showUntrackedFiles no
+          echo "[validate-timer] dotfiles config dotfiles.systemRef system"
+          dotfiles config --local dotfiles.systemRef system
 
-          echo "[validate-timer] dotfiles checkout master -- .gitignore .dotfiles/"
-          dotfiles checkout master -- .gitignore .dotfiles/
+          echo "[validate-timer] dotfiles checkout system -- .gitignore .dotfiles/"
+          dotfiles checkout system -- .gitignore .dotfiles/
+          # Park HEAD on the machine branch so the init commit never lands on
+          # GitHub's default (main) or on the system baseline.
+          echo "[validate-timer] symbolic-ref HEAD refs/heads/ci-machine"
+          dotfiles symbolic-ref HEAD refs/heads/ci-machine
 
           echo "[validate-timer] dotfiles add -u ."
           dotfiles add -u .
-          echo "[validate-timer] dotfiles commit -m Init dotfiles"
-          dotfiles commit -m "Init dotfiles"
+          echo "[validate-timer] dotfiles commit -m Init dotfiles (skip if clean)"
+          if ! dotfiles diff --cached --quiet; then
+            dotfiles commit -m "Init dotfiles"
+          fi
 
           echo "[validate-timer] dotfiles push -u origin HEAD"
           dotfiles push -u origin HEAD
@@ -97,7 +109,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          git config --global init.defaultBranch master
+          # Do not hijack git's global default branch. Instance default is
+          # `main` (landing); the named baseline is `system`.
           function dotfiles { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" @args }
 
           $ws = $env:GITHUB_WORKSPACE
@@ -113,12 +126,15 @@ jobs:
           # and worktree-config files from the workspace .git).
           Write-Host "[validate-timer] git init --bare C:\dotfiles-remote.git"
           git init --bare C:\dotfiles-remote.git
-          Write-Host "[validate-timer] push workspace HEAD -> C:\dotfiles-remote.git refs/heads/master"
-          git -C "$ws" push C:\dotfiles-remote.git "HEAD:refs/heads/master"
-          # A machine uses its OWN branch, never the shared master baseline. Push a
-          # distinct machine branch ("ci-machine") so the bootstrap smoke test can
-          # check it out via -Branch and prove the argument actually took effect
-          # (a value != master that we can assert on HEAD).
+          Write-Host "[validate-timer] push workspace HEAD -> main (instance default)"
+          git -C "$ws" push C:\dotfiles-remote.git "HEAD:refs/heads/main"
+          Write-Host "[validate-timer] push workspace HEAD -> system (named baseline)"
+          git -C "$ws" push C:\dotfiles-remote.git "HEAD:refs/heads/system"
+          git --git-dir=C:\dotfiles-remote.git symbolic-ref HEAD refs/heads/main
+          # A machine uses its OWN branch, never the shared system baseline and
+          # never GitHub's default. Push a distinct machine branch ("ci-machine")
+          # so the bootstrap smoke test can check it out via -Branch and prove
+          # the argument actually took effect (a value != main/system).
           Write-Host "[validate-timer] push workspace HEAD -> C:\dotfiles-remote.git refs/heads/ci-machine"
           git -C "$ws" push C:\dotfiles-remote.git "HEAD:refs/heads/ci-machine"
 
@@ -128,14 +144,21 @@ jobs:
 
           Write-Host "[validate-timer] dotfiles config status.showUntrackedFiles no"
           dotfiles config status.showUntrackedFiles no
+          Write-Host "[validate-timer] dotfiles config dotfiles.systemRef system"
+          dotfiles config --local dotfiles.systemRef system
 
-          Write-Host "[validate-timer] dotfiles checkout master -- .gitignore .dotfiles/"
-          dotfiles checkout master -- .gitignore .dotfiles/
+          Write-Host "[validate-timer] dotfiles checkout system -- .gitignore .dotfiles/"
+          dotfiles checkout system -- .gitignore .dotfiles/
+          Write-Host "[validate-timer] symbolic-ref HEAD refs/heads/ci-machine"
+          dotfiles symbolic-ref HEAD refs/heads/ci-machine
 
           Write-Host "[validate-timer] dotfiles add -u ."
           dotfiles add -u .
-          Write-Host "[validate-timer] dotfiles commit -m Init dotfiles"
-          dotfiles commit -m "Init dotfiles"
+          Write-Host "[validate-timer] dotfiles commit -m Init dotfiles (skip if clean)"
+          dotfiles diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+              dotfiles commit -m "Init dotfiles"
+          }
           Write-Host "[validate-timer] dotfiles push -u origin HEAD"
           dotfiles push -u origin HEAD
           Write-Host "[validate-timer] bare repo setup done (Windows)"
@@ -146,7 +169,7 @@ jobs:
       # a clean checkout + showUntrackedFiles=no. Two paths are exercised:
       #   Test 1 (arguments): --repo/--branch ci-machine, fully non-interactive,
       #     asserting HEAD lands on ci-machine (proves the --branch arg took
-      #     effect — a non-master value distinct from the shared baseline).
+      #     effect — a value != main/system, distinct from default and baseline).
       #   Test 2 (-y):  no --branch, -y auto-accepts the auto-detected machine
       #     name. We replicate the script's exact detection here, push that name
       #     as a branch on the synthetic remote, then run with -y and assert HEAD
@@ -208,7 +231,7 @@ jobs:
             # Detected name is a usable branch (the happy end-to-end case): mint it
             # on the synthetic remote, run -y with NO --branch, assert HEAD lands on
             # the detected name. </dev/null proves no stdin/prompt is read.
-            echo "[validate-timer] Test 2: push master:$DETECTED onto synthetic remote"
+            echo "[validate-timer] Test 2: push HEAD:$DETECTED onto synthetic remote"
             git -C "$GITHUB_WORKSPACE" push /tmp/dotfiles-remote.git "HEAD:refs/heads/$DETECTED"
             echo "[validate-timer] Test 2: bootstrap.sh -y (NO --branch) -> $GITDIR2"
             bash /tmp/bootstrap-ci-y.sh --repo /tmp/dotfiles-remote.git -y </dev/null
@@ -303,7 +326,7 @@ jobs:
           if ($validRef) {
             # Happy end-to-end case: mint the detected branch, run -y with NO
             # -Branch, assert HEAD lands on it.
-            Write-Host "[validate-timer] Test 2: push master:$detected onto synthetic remote"
+            Write-Host "[validate-timer] Test 2: push HEAD:$detected onto synthetic remote"
             git -C "$env:GITHUB_WORKSPACE" push C:\dotfiles-remote.git "HEAD:refs/heads/$detected"
             if ($LASTEXITCODE -ne 0) { throw "push of detected branch failed (exit $LASTEXITCODE)" }
             Write-Host "[validate-timer] Test 2: bootstrap.ps1 -y (NO -Branch) -> $gitdir2"
@@ -948,7 +971,7 @@ jobs:
           Write-Host "[validate-timer] ci-commit-message-demos.ps1 ok"
 
       # ── dotfiles-update: clean-merge case ────────────────────────────────
-      # Advance origin/master with a brand-new system file (no overlap with the
+      # Advance origin/system with a brand-new system file (no overlap with the
       # machine's tree), then `dotfiles-update` must fetch + merge it cleanly.
       - name: "dotfiles-update: clean merge (Linux)"
         if: runner.os == 'Linux'
@@ -958,23 +981,23 @@ jobs:
           dotfiles() { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" "$@"; }
           cd "$HOME"
 
-          echo "[validate-timer] advance origin/master via scratch clone"
+          echo "[validate-timer] advance origin/system via scratch clone"
           rm -rf /tmp/df-scratch
           git clone /tmp/dotfiles-remote.git /tmp/df-scratch
           ( cd /tmp/df-scratch
-            git checkout master
+            git checkout system
             printf 'system improvement\n' > .dotfiles/SYSTEM_NEW.txt
             git add -f .dotfiles/SYSTEM_NEW.txt
             git commit -m "feat(system): add SYSTEM_NEW marker"
-            git push origin master )
+            git push origin system )
 
           echo "[validate-timer] dotfiles-update (clean) -> expect exit 0 + file present"
           bash "$HOME/.dotfiles/dotfiles-update.sh"
           test -f "$HOME/.dotfiles/SYSTEM_NEW.txt" \
             || { echo "FAIL: SYSTEM_NEW.txt not merged into work-tree"; exit 1; }
-          dotfiles merge-base --is-ancestor origin/master HEAD \
-            || { echo "FAIL: origin/master not merged into HEAD"; exit 1; }
-          echo "[validate-timer] PASS: clean merge propagated origin/master"
+          dotfiles merge-base --is-ancestor origin/system HEAD \
+            || { echo "FAIL: origin/system not merged into HEAD"; exit 1; }
+          echo "[validate-timer] PASS: clean merge propagated origin/system"
 
       - name: "dotfiles-update: clean merge (Windows)"
         if: runner.os == 'Windows'
@@ -984,29 +1007,29 @@ jobs:
           function dotfiles { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" @args }
           Set-Location $HOME
 
-          Write-Host "[validate-timer] advance origin/master via scratch clone"
+          Write-Host "[validate-timer] advance origin/system via scratch clone"
           Remove-Item -Recurse -Force C:\df-scratch -ErrorAction SilentlyContinue
           git clone C:\dotfiles-remote.git C:\df-scratch
           Push-Location C:\df-scratch
           try {
-              git checkout master
+              git checkout system
               "system improvement" | Set-Content .dotfiles\SYSTEM_NEW.txt
               git add -f .dotfiles/SYSTEM_NEW.txt
               git commit -m "feat(system): add SYSTEM_NEW marker"
-              git push origin master
+              git push origin system
           } finally { Pop-Location }
 
           Write-Host "[validate-timer] dotfiles-update (clean) -> expect exit 0 + file present"
           pwsh "$HOME\.dotfiles\dotfiles-update.ps1"
           if ($LASTEXITCODE -ne 0) { throw "FAIL: dotfiles-update exited $LASTEXITCODE on clean merge" }
           if (-not (Test-Path "$HOME\.dotfiles\SYSTEM_NEW.txt")) { throw "FAIL: SYSTEM_NEW.txt not merged" }
-          dotfiles merge-base --is-ancestor origin/master HEAD
-          if ($LASTEXITCODE -ne 0) { throw "FAIL: origin/master not merged into HEAD" }
-          Write-Host "[validate-timer] PASS: clean merge propagated origin/master"
+          dotfiles merge-base --is-ancestor origin/system HEAD
+          if ($LASTEXITCODE -ne 0) { throw "FAIL: origin/system not merged into HEAD" }
+          Write-Host "[validate-timer] PASS: clean merge propagated origin/system"
 
       # ── dotfiles-update: conflict case ───────────────────────────────────
       # Diverge the same file on both sides: the machine edits a tracked file,
-      # origin/master edits the same region. `dotfiles-update` must print a loud
+      # origin/system edits the same region. `dotfiles-update` must print a loud
       # message, list the conflict, abort the merge (clean tree), and exit 1.
       - name: "dotfiles-update: conflict aborts (Linux)"
         if: runner.os == 'Linux'
@@ -1020,11 +1043,11 @@ jobs:
           rm -rf /tmp/df-scratch2
           git clone /tmp/dotfiles-remote.git /tmp/df-scratch2
           ( cd /tmp/df-scratch2
-            git checkout master
+            git checkout system
             printf 'remote-side line\n' > .dotfiles/CONFLICT.txt
             git add -f .dotfiles/CONFLICT.txt
             git commit -m "feat(system): CONFLICT.txt remote edit"
-            git push origin master )
+            git push origin system )
 
           echo "[validate-timer] machine edits CONFLICT.txt the other way"
           printf 'machine-side line\n' > "$HOME/.dotfiles/CONFLICT.txt"
@@ -1064,11 +1087,11 @@ jobs:
           git clone C:\dotfiles-remote.git C:\df-scratch2
           Push-Location C:\df-scratch2
           try {
-              git checkout master
+              git checkout system
               "remote-side line" | Set-Content .dotfiles\CONFLICT.txt
               git add -f .dotfiles/CONFLICT.txt
               git commit -m "feat(system): CONFLICT.txt remote edit"
-              git push origin master
+              git push origin system
           } finally { Pop-Location }
 
           Write-Host "[validate-timer] machine edits CONFLICT.txt the other way"

@@ -116,6 +116,23 @@ else
        "git clone --bare <your-dotfiles-remote> \"$GIT_DIR\""
 fi
 
+# 5b. configured baseline ref ───────────────────────────────────────────────
+# Any branch name is allowed. Report it; fail only when it is not a branch name.
+head_branch="$(dotfiles symbolic-ref --short HEAD 2>/dev/null || true)"
+sysref_cfg="$(dotfiles config --get dotfiles.systemRef 2>/dev/null || true)"
+sysref_cfg="${sysref_cfg:-system}"
+if [ -n "$head_branch" ]; then
+  info "HEAD is '$head_branch'"
+else
+  info "HEAD is detached"
+fi
+if git check-ref-format --branch "$sysref_cfg" >/dev/null 2>&1; then
+  info "system baseline ref = $sysref_cfg (git config dotfiles.systemRef)"
+else
+  fail "dotfiles.systemRef '$sysref_cfg' is not a valid branch name" \
+       "git --git-dir \"$GIT_DIR\" config dotfiles.systemRef system"
+fi
+
 # 6. user_hooks (info only) ─────────────────────────────────────────────────
 user_hooks_example="$RUNNER_DIR/dotfiles_githooks/user_hooks.example"
 user_hooks_active="$RUNNER_DIR/dotfiles_githooks/user_hooks.py"
@@ -161,6 +178,13 @@ else
            "git --git-dir \"$GIT_DIR\" remote add origin <your-dotfiles-remote>"
     elif dotfiles ls-remote --heads "$remote" >/dev/null 2>&1; then
       pass "remote '$remote' reachable (push/fetch network + auth OK)"
+      sysref_cfg="${sysref_cfg:-system}"
+      if dotfiles ls-remote --heads "$remote" "$sysref_cfg" | grep -q .; then
+        pass "system baseline '$sysref_cfg' exists on '$remote'"
+      else
+        fail "no '$sysref_cfg' branch on '$remote'" \
+             "git push origin HEAD:$sysref_cfg   or set dotfiles.systemRef to the baseline branch"
+      fi
     else
       fail "remote '$remote' unreachable (network down or SSH agent locked)" \
            "check connectivity / unlock SSH agent, or re-run with --skip-network"

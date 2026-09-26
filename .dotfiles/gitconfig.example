@@ -10,9 +10,10 @@
 #
 # A missing ~/.gitconfig.local is silently skipped by git, so every machine
 # must create its own.
-
-[init]
-	defaultBranch = master
+#
+# Do not set init.defaultBranch here. That hijacks every new repo on the
+# machine — the same class of bug as using GitHub's default branch as the
+# dotfiles system baseline. Leave git/GitHub's default alone.
 
 [pull]
 	rebase = false

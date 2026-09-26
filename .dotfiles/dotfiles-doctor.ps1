@@ -121,6 +121,24 @@ if ($LASTEXITCODE -eq 0) {
         "git clone --bare <your-dotfiles-remote> `"$GitDir`""
 }
 
+# 5b. configured baseline ref ───────────────────────────────────────────────
+# Any branch name is allowed. Report it; fail only when it is not a branch name.
+$headBranch = (Invoke-Dotfiles symbolic-ref --short HEAD 2>$null | Out-String).Trim()
+$sysrefCfg = (Invoke-Dotfiles config --get dotfiles.systemRef 2>$null | Out-String).Trim()
+if (-not $sysrefCfg) { $sysrefCfg = 'system' }
+if ($headBranch) {
+    Write-Info "HEAD is '$headBranch'"
+} else {
+    Write-Info "HEAD is detached"
+}
+& git check-ref-format --branch $sysrefCfg *> $null
+if ($LASTEXITCODE -eq 0) {
+    Write-Info "system baseline ref = $sysrefCfg (git config dotfiles.systemRef)"
+} else {
+    Write-Fail "dotfiles.systemRef '$sysrefCfg' is not a valid branch name" `
+        "git --git-dir `"$GitDir`" config dotfiles.systemRef system"
+}
+
 # 6. user_hooks (info only) ─────────────────────────────────────────────────
 $userHooksExample = "$RunnerDir\dotfiles_githooks\user_hooks.example"
 $userHooksActive  = "$RunnerDir\dotfiles_githooks\user_hooks.py"
@@ -177,6 +195,14 @@ if ($SkipNetwork) {
             Invoke-Dotfiles ls-remote --heads $remote *> $null
             if ($LASTEXITCODE -eq 0) {
                 Write-Pass "remote '$remote' reachable (push/fetch network + auth OK)"
+                if (-not $sysrefCfg) { $sysrefCfg = 'system' }
+                $sysOut = @(& git --git-dir="$GitDir" --work-tree="$WorkTree" ls-remote --heads $remote $sysrefCfg 2>$null | Where-Object { $_ })
+                if ($sysOut.Count -gt 0) {
+                    Write-Pass "system baseline '$sysrefCfg' exists on '$remote'"
+                } else {
+                    Write-Fail "no '$sysrefCfg' branch on '$remote'" `
+                        "git push origin HEAD:$sysrefCfg   or set dotfiles.systemRef to the baseline branch"
+                }
             } else {
                 Write-Fail "remote '$remote' unreachable (network down or SSH agent locked)" `
                     "check connectivity / unlock SSH agent, or re-run with -SkipNetwork"

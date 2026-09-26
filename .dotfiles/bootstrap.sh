@@ -10,6 +10,8 @@
 #   --branch <name>   (optional) branch to check out. If omitted, the machine name
 #                     is auto-detected and you are prompted to confirm it or type
 #                     a different branch.
+#   --system-ref <name> (optional) baseline branch `dotfiles update` merges from.
+#                     Any valid branch name. Default: system.
 #   -y, --yes         (optional) auto-accept the auto-detected branch without
 #                     prompting (useful for non-interactive / scripted setup).
 #   <repo-url> [branch]  positional form, equivalent to the flags above.
@@ -17,6 +19,7 @@
 # Usage:
 #   bash bootstrap.sh --repo git@github.com:<YOU>/dotfiles.git
 #   bash bootstrap.sh --repo git@github.com:<YOU>/dotfiles.git --branch my-laptop
+#   bash bootstrap.sh --repo git@github.com:<YOU>/dotfiles.git --system-ref master
 #   bash bootstrap.sh --repo git@github.com:<YOU>/dotfiles.git -y
 #   bash bootstrap.sh git@github.com:<YOU>/dotfiles.git my-laptop
 #
@@ -31,18 +34,20 @@ set -eu
 
 usage() {
   cat >&2 <<'EOF'
-Usage: bootstrap.sh --repo <url> [--branch <name>]
+Usage: bootstrap.sh --repo <url> [--branch <name>] [--system-ref <name>]
        bootstrap.sh <repo-url> [branch]
 
-  --repo <url>     git remote URL of your dotfiles repo (required)
-  --branch <name>  branch to check out (optional; you are prompted if omitted)
-  -y, --yes        auto-accept the auto-detected branch without prompting
+  --repo <url>         git remote URL of your dotfiles repo (required)
+  --branch <name>      branch to check out (optional; you are prompted if omitted)
+  --system-ref <name>  baseline branch dotfiles update merges from (default: system)
+  -y, --yes            auto-accept the auto-detected branch without prompting
 EOF
 }
 
 # ── Parse arguments: flags take precedence, positional as a convenience ─────
 REPO=""
 BRANCH=""
+SYSTEM_REF="system"
 branch_set=0
 assume_yes=0
 while [ $# -gt 0 ]; do
@@ -51,6 +56,8 @@ while [ $# -gt 0 ]; do
     --repo=*) REPO="${1#--repo=}" ;;
     --branch)   shift; [ $# -gt 0 ] || { echo "bootstrap.sh: --branch needs a value" >&2; usage; exit 1; }; BRANCH="$1"; branch_set=1 ;;
     --branch=*) BRANCH="${1#--branch=}"; branch_set=1 ;;
+    --system-ref)   shift; [ $# -gt 0 ] || { echo "bootstrap.sh: --system-ref needs a value" >&2; usage; exit 1; }; SYSTEM_REF="$1" ;;
+    --system-ref=*) SYSTEM_REF="${1#--system-ref=}" ;;
     -y|--yes) assume_yes=1 ;;
     -h|--help) usage; exit 0 ;;
     --) shift; break ;;
@@ -113,12 +120,32 @@ if [ "$branch_set" -eq 0 ]; then
   fi
 fi
 
-echo "bootstrap.sh: repo=$REPO branch=$BRANCH"
+# Any name git accepts as a branch is fine. HEAD / origin/HEAD are not branch
+# names; they alias whatever the host calls default, so update must not follow them.
+require_branch_name() {
+  # $1 = label, $2 = candidate
+  if ! git check-ref-format --branch "$2" >/dev/null 2>&1; then
+    echo "bootstrap.sh: '$2' is not a valid branch name ($1)." >&2
+    exit 1
+  fi
+}
+
+require_branch_name "machine branch" "$BRANCH"
+require_branch_name "system ref" "$SYSTEM_REF"
+
+echo "bootstrap.sh: repo=$REPO branch=$BRANCH system-ref=$SYSTEM_REF"
 
 git clone --bare "$REPO" "$HOME/.dotfiles"
 # A function, not an alias: aliases are not expanded in non-interactive scripts.
 dotfiles() { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" "$@"; }
 dotfiles config --local status.showUntrackedFiles no
+# Named baseline for `dotfiles update`. Not resolved from origin/HEAD.
+dotfiles config --local dotfiles.systemRef "$SYSTEM_REF"
+if ! dotfiles ls-remote --heads origin "$SYSTEM_REF" | grep -q .; then
+  echo "bootstrap.sh: baseline branch '$SYSTEM_REF' is not on the remote." >&2
+  echo "  Push it (git push origin HEAD:$SYSTEM_REF) or pass --system-ref <name>." >&2
+  exit 1
+fi
 
 # Git pathspecs (the `.` below) are CWD-relative. The bare repo's work-tree is
 # $HOME, so cd there before checking out — otherwise running bootstrap from any
