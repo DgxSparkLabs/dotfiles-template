@@ -21,7 +21,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git grep -nI -e "$(printf '%s%s' '.' 'dotfiles')"; then
+          if git grep -nI -F -e "$(printf '%s%s' '.' 'dotfiles')"; then
             echo "FAIL: tracked files still name the old directory"
             exit 1
           fi

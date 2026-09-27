@@ -23,11 +23,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git grep -nI -e "$(printf '%s%s' '.' 'dotfiles')"; then
+          if git grep -nI -F -e "$(printf '%s%s' '.' 'dotfiles')"; then
             echo "FAIL: tracked files still name the old directory"
             exit 1
           fi
-          echo "[validate-timer] no .dotfiles path remains"
+          echo "[validate-timer] old directory name is gone"
 
       - name: Ignore rules for the split layout
         shell: bash
@@ -269,7 +269,7 @@ jobs:
           test -f "$FRESH/.local/share/dotfiles/bootstrap.sh"
           test ! -e "$FRESH/.local/share/dotfiles/HEAD"
           test ! -d "$FRESH/.local/share/dotfiles/objects"
-          test ! -e "$FRESH/.dotfiles"
+          test ! -e "$FRESH/$(printf '%s%s' '.' 'dotfiles')"
           echo "[validate-timer] fresh-home bootstrap created .local/share and split git dir from tool dir"
 
           # We run a tweaked copy with GITDIR redirected to a fresh dir so the
@@ -304,7 +304,7 @@ jobs:
           test -f "$GITDIR1/HEAD" && test -d "$GITDIR1/objects"
           test ! -e "$HOME/.local/share/dotfiles/HEAD"
           test ! -d "$HOME/.local/share/dotfiles/objects"
-          test ! -e "$HOME/.dotfiles"
+          test ! -e "$HOME/$(printf '%s%s' '.' 'dotfiles')"
           STATUS=$(dotfiles1 status --porcelain)
           [ -z "$STATUS" ] || { echo "FAIL: dirty checkout:"; echo "$STATUS"; exit 1; }
 
@@ -401,7 +401,7 @@ jobs:
           if (-not (Test-Path (Join-Path $fresh '.local/share/dotfiles/bootstrap.ps1'))) { throw 'FAIL: fresh-home tool dir missing' }
           if (Test-Path (Join-Path $fresh '.local/share/dotfiles/HEAD')) { throw 'FAIL: tool dir contains HEAD' }
           if (Test-Path (Join-Path $fresh '.local/share/dotfiles/objects')) { throw 'FAIL: tool dir contains objects' }
-          if (Test-Path (Join-Path $fresh '.dotfiles')) { throw 'FAIL: fresh home has .dotfiles' }
+          if (Test-Path (Join-Path $fresh ('.' + 'dotfiles'))) { throw 'FAIL: fresh home has the old directory' }
           Write-Host "[validate-timer] fresh-home bootstrap created .local/share and split git dir from tool dir"
 
           $mainGit = Join-Path $HOME '.local/share/dotfiles.git'
@@ -426,7 +426,7 @@ jobs:
           if (-not (Test-Path (Join-Path $gitdir1 'objects'))) { throw 'FAIL: throwaway git dir has no objects' }
           if (Test-Path "$HOME/.local/share/dotfiles/HEAD") { throw 'FAIL: tool dir contains HEAD' }
           if (Test-Path "$HOME/.local/share/dotfiles/objects") { throw 'FAIL: tool dir contains objects' }
-          if (Test-Path "$HOME/.dotfiles") { throw 'FAIL: ~/.dotfiles was created' }
+          if (Test-Path (Join-Path $HOME ('.' + 'dotfiles'))) { throw 'FAIL: old directory was created' }
           $status = dotfiles1 status --porcelain
           if ($status) { throw "FAIL: dirty checkout:`n$status" }
 
@@ -947,7 +947,7 @@ jobs:
             "$HOME/.config/systemd/user/dotfiles-git-commit.service"
           test ! -e "$HOME/.local/share/dotfiles.git/auto-commit.sh"
           test ! -e "$HOME/.local/share/dotfiles/auto-commit.sh"
-          test ! -e "$HOME/.dotfiles"
+          test ! -e "$HOME/$(printf '%s%s' '.' 'dotfiles')"
           test ! -e "$decoy/data/dotfiles"
           test ! -e "$decoy/state/dotfiles"
           test ! -e "$decoy/cache/dotfiles"
@@ -976,7 +976,7 @@ jobs:
           test -f "$HOME/Library/LaunchAgents/dotfiles-git-commit.plist"
           test ! -e "$HOME/Library/Logs/dotfiles-git-commit"
           test ! -e "$HOME/Library/Application Support/dotfiles"
-          test ! -e "$HOME/.dotfiles"
+          test ! -e "$HOME/$(printf '%s%s' '.' 'dotfiles')"
           test ! -e "$decoy/data/dotfiles"
           test ! -e "$decoy/state/dotfiles"
           echo "[validate-timer] dotfiles-timer.sh install ok (plist present)"
@@ -1017,7 +1017,7 @@ jobs:
           }
           if (Test-Path "$HOME/.local/share/dotfiles.git/auto-commit.ps1") { throw 'FAIL: commit script inside git dir' }
           if (Test-Path "$HOME/.local/share/dotfiles/auto-commit.ps1") { throw 'FAIL: commit script inside tool dir' }
-          if (Test-Path "$HOME/.dotfiles") { throw 'FAIL: ~/.dotfiles was created' }
+          if (Test-Path (Join-Path $HOME ('.' + 'dotfiles'))) { throw 'FAIL: old directory was created' }
           if (Test-Path (Join-Path $env:APPDATA 'dotfiles')) { throw 'FAIL: %APPDATA%\dotfiles was created' }
           foreach ($rel in @('data\dotfiles', 'state\dotfiles', 'cache\dotfiles')) {
             if (Test-Path (Join-Path $decoy $rel)) { throw "FAIL: decoy contains $rel" }
