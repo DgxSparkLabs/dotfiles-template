@@ -12,10 +12,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Reject the old dotfiles directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git grep -nI -e "$(printf '%s%s' '.' 'dotfiles')"; then
+            echo "FAIL: tracked files still name the old directory"
+            exit 1
+          fi
 
       # ── bash: syntax-check the bash completion ───────────────────────────
       - name: Parse-check bash completion
@@ -23,7 +32,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "[validate-completions] bash -n dotfiles.bash"
-          bash -n .dotfiles/completions/dotfiles.bash
+          bash -n .local/share/dotfiles/completions/dotfiles.bash
 
       # ── zsh: syntax-check the zsh completion (only where zsh is present) ──
       - name: Parse-check zsh completion
@@ -33,7 +42,7 @@ jobs:
           set -euo pipefail
           if command -v zsh >/dev/null 2>&1; then
             echo "[validate-completions] zsh -n dotfiles.zsh"
-            zsh -n .dotfiles/completions/dotfiles.zsh
+            zsh -n .local/share/dotfiles/completions/dotfiles.zsh
           else
             echo "[validate-completions] zsh not present — skipping"
           fi
@@ -43,7 +52,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $path = '.dotfiles/completions/dotfiles.ps1'
+          $path = '.local/share/dotfiles/completions/dotfiles.ps1'
           Write-Host "[validate-completions] parse $path"
           $tokens = $null
           $errors = $null

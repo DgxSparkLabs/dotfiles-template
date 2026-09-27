@@ -1,0 +1,237 @@
+#!/usr/bin/env pwsh
+# dotfiles-doctor.ps1: Setup health-check for the bare-repo dotfiles system.
+#
+# Pure pwsh — deliberately NOT run through the uv runner, so that a broken uv
+# install is still diagnosable. Each check prints PASS / FAIL / INFO with an
+# actionable fix hint. Exits non-zero if any *hard* check FAILs.
+#
+# Network/SSH reachability is gated behind -SkipNetwork (offline machines or a
+# locked SSH agent would otherwise false-FAIL).
+
+param(
+    [string]$GitDir = "$HOME/.local/share/dotfiles.git",
+    [string]$WorkTree = "$HOME",
+    [switch]$SkipNetwork,
+    [switch]$Help
+)
+
+# Program files follow the work tree. State and the uv cache stay under $HOME.
+$StateDir  = "$HOME/.local/state/dotfiles"
+$CacheDir  = "$HOME/.cache/dotfiles/githooks-runner"
+$ToolDir   = "$WorkTree/.local/share/dotfiles"
+$HooksPath = "$ToolDir/.githooks"
+$RunnerDir = "$ToolDir/githooks-runner"
+$TimerPs1  = "$ToolDir/dotfiles-timer.ps1"
+$LoopPath  = "$StateDir/auto-commit-loop.ps1"
+
+if ($Help) {
+    Write-Output @"
+Usage: pwsh dotfiles-doctor.ps1 [-GitDir <path>] [-WorkTree <path>] [-SkipNetwork]
+
+Runs setup health-checks for the dotfiles bare repo at:
+  $GitDir  (work-tree: $WorkTree)
+
+  -GitDir <path>     Override the bare-repo git dir (default: `$HOME/.local/share/dotfiles.git).
+  -WorkTree <path>   Override the work-tree (default: `$HOME).
+                     The expected program directory is `$WorkTree/.local/share/dotfiles.
+                     State and the uv cache stay under `$HOME.
+  -SkipNetwork       Omit network/SSH push-reachability checks (offline / locked agent).
+
+Prints PASS/FAIL/INFO per check with a fix hint; exits non-zero on any hard FAIL.
+"@
+    exit 0
+}
+
+function Invoke-Dotfiles {
+    & git --git-dir="$GitDir" --work-tree="$WorkTree" @args
+}
+
+$script:HardFails = 0
+
+# Report goes to the success/output stream (stdout) — NOT Write-Host. Write-Host
+# targets the Information stream (6), which a plain `... 2>&1 | Out-String` capture
+# does not collect, so a caller scraping the report (e.g. CI) would see an empty
+# string even though the console showed the lines. Write-Output keeps the doctor's
+# output capturable the same way the sibling dotfiles-doctor.sh writes to stdout.
+function Write-Pass([string]$msg) { Write-Output "  PASS  $msg" }
+function Write-Info([string]$msg) { Write-Output "  INFO  $msg" }
+function Write-Fail([string]$msg, [string]$fix) {
+    Write-Output "  FAIL  $msg"
+    if ($fix) { Write-Output "        fix: $fix" }
+    $script:HardFails++
+}
+
+Write-Output "dotfiles doctor — checking setup at $GitDir"
+Write-Output ""
+
+# 1. uv on PATH ─────────────────────────────────────────────────────────────
+$uv = Get-Command uv -ErrorAction SilentlyContinue
+if ($uv) {
+    Write-Pass "uv on PATH ($($uv.Source))"
+} else {
+    Write-Fail "uv not found on PATH" `
+        "install uv (https://docs.astral.sh/uv/) and ensure it is on PATH where Git runs hooks"
+}
+
+# 2. core.hooksPath ─────────────────────────────────────────────────────────
+$hooksCfg = (Invoke-Dotfiles config --get core.hooksPath 2>$null)
+# git on Windows returns forward-slash or back-slash depending on how it was set; normalize for compare.
+$normCfg = if ($hooksCfg) { $hooksCfg.Replace('/', '\') } else { $hooksCfg }
+$normExp = $HooksPath.Replace('/', '\')
+if ($normCfg -eq $normExp) {
+    Write-Pass "core.hooksPath = $hooksCfg"
+} else {
+    $shown = if ($hooksCfg) { $hooksCfg } else { '<unset>' }
+    Write-Fail "core.hooksPath is '$shown' (expected $HooksPath)" `
+        "git --git-dir `"$GitDir`" config core.hooksPath `"$HooksPath`""
+}
+
+# 3. status.showUntrackedFiles ──────────────────────────────────────────────
+$sutCfg = (Invoke-Dotfiles config --get status.showUntrackedFiles 2>$null)
+if ($sutCfg -eq 'no') {
+    Write-Pass "status.showUntrackedFiles = no"
+} else {
+    $shown = if ($sutCfg) { $sutCfg } else { '<unset>' }
+    Write-Fail "status.showUntrackedFiles is '$shown' (expected no)" `
+        "git --git-dir `"$GitDir`" config status.showUntrackedFiles no"
+}
+
+# 4. venv synced ────────────────────────────────────────────────────────────
+if (-not (Test-Path $RunnerDir)) {
+    Write-Fail "githooks-runner project not found at $RunnerDir" `
+        "ensure .local/share/dotfiles/ is checked out into your work-tree"
+} elseif (-not $uv) {
+    Write-Fail "cannot verify venv sync (uv missing)" `
+        "install uv, then: `$env:UV_PROJECT_ENVIRONMENT='$CacheDir'; uv sync --project `"$RunnerDir`""
+} else {
+    $prevUvEnv = $env:UV_PROJECT_ENVIRONMENT
+    $env:UV_PROJECT_ENVIRONMENT = $CacheDir
+    try {
+        & uv sync --project "$RunnerDir" --frozen --check *> $null
+        $uvCode = $LASTEXITCODE
+    } finally {
+        if ($null -eq $prevUvEnv) {
+            Remove-Item Env:UV_PROJECT_ENVIRONMENT -ErrorAction SilentlyContinue
+        } else {
+            $env:UV_PROJECT_ENVIRONMENT = $prevUvEnv
+        }
+    }
+    if ($uvCode -eq 0) {
+        Write-Pass "githooks-runner venv synced"
+    } else {
+        Write-Fail "githooks-runner venv not synced" `
+            "`$env:UV_PROJECT_ENVIRONMENT='$CacheDir'; uv sync --project `"$RunnerDir`""
+    }
+}
+
+# 5. work-tree clean ────────────────────────────────────────────────────────
+Invoke-Dotfiles rev-parse --git-dir *> $null
+if ($LASTEXITCODE -eq 0) {
+    $porcelain = (Invoke-Dotfiles status --porcelain 2>$null | Out-String).Trim()
+    if (-not $porcelain) {
+        Write-Pass "work-tree clean (no tracked changes)"
+    } else {
+        Write-Fail "work-tree has uncommitted tracked changes" `
+            "review with: git --git-dir `"$GitDir`" --work-tree `"$WorkTree`" status"
+    }
+} else {
+    Write-Fail "no git repo at $GitDir" `
+        "git clone --bare <your-dotfiles-remote> `"$GitDir`""
+}
+
+# 5b. configured baseline ref ───────────────────────────────────────────────
+# Any branch name is allowed. Report it; fail only when it is not a branch name.
+$headBranch = (Invoke-Dotfiles symbolic-ref --short HEAD 2>$null | Out-String).Trim()
+$sysrefCfg = (Invoke-Dotfiles config --get dotfiles.systemRef 2>$null | Out-String).Trim()
+if (-not $sysrefCfg) { $sysrefCfg = 'system' }
+if ($headBranch) {
+    Write-Info "HEAD is '$headBranch'"
+} else {
+    Write-Info "HEAD is detached"
+}
+& git check-ref-format --branch $sysrefCfg *> $null
+if ($LASTEXITCODE -eq 0) {
+    Write-Info "system baseline ref = $sysrefCfg (git config dotfiles.systemRef)"
+} else {
+    Write-Fail "dotfiles.systemRef '$sysrefCfg' is not a valid branch name" `
+        "git --git-dir `"$GitDir`" config dotfiles.systemRef system"
+}
+
+# 6. user_hooks (info only) ─────────────────────────────────────────────────
+$userHooksExample = "$RunnerDir\dotfiles_githooks\user_hooks.example"
+$userHooksActive  = "$RunnerDir\dotfiles_githooks\user_hooks.py"
+if (Test-Path $userHooksExample) {
+    Write-Info "user_hooks.example present ($userHooksExample)"
+} else {
+    Write-Info "user_hooks.example not present (optional customization template)"
+}
+if (Test-Path $userHooksActive) {
+    Write-Info "user_hooks.py activated — custom hook logic is in effect"
+} else {
+    Write-Info "user_hooks.py not activated (copy user_hooks.example to user_hooks.py to enable)"
+}
+
+# 7. timer state (reuse dotfiles-timer status probes) ───────────────────────
+if (Test-Path $TimerPs1) {
+    $task = Get-ScheduledTask -TaskName 'dotfiles-git-commit' -ErrorAction SilentlyContinue
+    if ($task) {
+        Write-Info "auto-commit task registered (state: $($task.State))"
+    } else {
+        # User-mode install state is encoded by presence of the loop script.
+        if (Test-Path $LoopPath) {
+            Write-Info "auto-commit loop installed (user mode)"
+        } else {
+            Write-Info "auto-commit timer not installed (optional: dotfiles-timer install)"
+        }
+    }
+} else {
+    Write-Info "dotfiles-timer.ps1 not found at $TimerPs1 (auto-commit is optional)"
+}
+
+# 8. network / SSH push reachability ────────────────────────────────────────
+if ($SkipNetwork) {
+    Write-Info "network/SSH push check skipped (-SkipNetwork)"
+} else {
+    Invoke-Dotfiles rev-parse --git-dir *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Fail "cannot check push reachability — no repo at $GitDir" `
+            "set up the bare repo first"
+    } else {
+        $branch = (Invoke-Dotfiles symbolic-ref --short HEAD 2>$null | Out-String).Trim()
+        $remote = $null
+        if ($branch) {
+            $remote = (Invoke-Dotfiles config --get "branch.$branch.remote" 2>$null | Out-String).Trim()
+        }
+        if (-not $remote) { $remote = 'origin' }
+
+        Invoke-Dotfiles remote get-url $remote *> $null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Fail "no remote '$remote' configured" `
+                "git --git-dir `"$GitDir`" remote add origin <your-dotfiles-remote>"
+        } else {
+            Invoke-Dotfiles ls-remote --heads $remote *> $null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Pass "remote '$remote' reachable (push/fetch network + auth OK)"
+                if (-not $sysrefCfg) { $sysrefCfg = 'system' }
+                $sysOut = @(& git --git-dir="$GitDir" --work-tree="$WorkTree" ls-remote --heads $remote $sysrefCfg 2>$null | Where-Object { $_ })
+                if ($sysOut.Count -gt 0) {
+                    Write-Pass "system baseline '$sysrefCfg' exists on '$remote'"
+                } else {
+                    Write-Fail "no '$sysrefCfg' branch on '$remote'" `
+                        "git push origin HEAD:$sysrefCfg   or set dotfiles.systemRef to the baseline branch"
+                }
+            } else {
+                Write-Fail "remote '$remote' unreachable (network down or SSH agent locked)" `
+                    "check connectivity / unlock SSH agent, or re-run with -SkipNetwork"
+            }
+        }
+    }
+}
+
+Write-Output ""
+if ($script:HardFails -gt 0) {
+    Write-Output "doctor: $($script:HardFails) hard check(s) FAILED — see fix hints above."
+    exit 1
+}
+Write-Output "doctor: all hard checks PASSED."
+exit 0

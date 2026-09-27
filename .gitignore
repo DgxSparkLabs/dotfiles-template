@@ -1,6 +1,13 @@
 /*
 !.gitignore
-!.dotfiles/
+
+# Parents must be re-included one level at a time or Git will not see the tool tree.
+!.local/
+.local/*
+!.local/share/
+.local/share/*
+!.local/share/dotfiles/
+
 # Defensive: never track these even if explicitly added
 .ssh/id_*
 .ssh/*_rsa

@@ -3,9 +3,9 @@
 set -euo pipefail
 
 # Same as README “The dotfiles command” (function so non-interactive bash expands it).
-dotfiles() { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" "$@"; }
+dotfiles() { git --git-dir="$HOME/.local/share/dotfiles.git/" --work-tree="$HOME" "$@"; }
 
-AC="${HOME}/.dotfiles/.auto-commit.sh"
+AC="${HOME}/.local/state/dotfiles/auto-commit.sh"
 
 dump_msg() {
   local title="$1"

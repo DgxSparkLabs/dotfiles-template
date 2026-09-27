@@ -2,7 +2,7 @@
 $ErrorActionPreference = 'Stop'
 
 # Same as README “The dotfiles command”
-function dotfiles { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" @args }
+function dotfiles { git --git-dir="$HOME/.local/share/dotfiles.git/" --work-tree="$HOME" @args }
 
 # Surface native (non-.NET) failures: $ErrorActionPreference=Stop doesn't catch git exit codes.
 function Invoke-Native([string]$Description) {
@@ -12,7 +12,7 @@ function Invoke-Native([string]$Description) {
 }
 
 $wt = $env:USERPROFILE
-$ac = Join-Path $HOME '.dotfiles\.auto-commit.ps1'
+$ac = Join-Path $HOME '.local/state/dotfiles/auto-commit.ps1'
 
 function Dump-Msg([string]$Title) {
     Write-Host "::group::$Title"

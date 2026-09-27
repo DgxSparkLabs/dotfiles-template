@@ -19,6 +19,36 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Reject the old dotfiles directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git grep -nI -e "$(printf '%s%s' '.' 'dotfiles')"; then
+            echo "FAIL: tracked files still name the old directory"
+            exit 1
+          fi
+          echo "[validate-timer] no .dotfiles path remains"
+
+      - name: Ignore rules for the split layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-files --error-unmatch .gitignore .local/share/dotfiles/bootstrap.sh >/dev/null
+          if git check-ignore -q .local/share/dotfiles/bootstrap.sh; then
+            echo "FAIL: bootstrap.sh is ignored"; exit 1
+          fi
+          for path in \
+            .local/share/dotfiles/not-shipped.txt \
+            .local/other.txt \
+            .local/share/notes.txt \
+            .local/share/dotfiles.git/HEAD \
+            .local/state/dotfiles/auto-commit.sh \
+            .cache/dotfiles/githooks-runner/pyvenv.cfg
+          do
+            git check-ignore -q "$path" || { echo "FAIL: $path is not ignored"; exit 1; }
+          done
+          echo "[validate-timer] ignore rules ok"
+
       - name: Configure git identity
         run: |
           echo "[validate-timer] git config --global user (ci@github-actions); runner=${{ runner.os }} sha=${{ github.sha }}"
@@ -42,7 +72,7 @@ jobs:
       # macOS is Unix → reuses the exact Linux bash setup (only the temp path differs,
       # and /tmp exists on macOS too), so we gate on "not Windows".
       # NOTE: deprecate once bootstrap is proven. This inline checkout duplicates
-      # what .dotfiles/bootstrap.{sh,ps1} now do; the dedicated bootstrap step
+      # what .local/share/dotfiles/bootstrap.{sh,ps1} now do; the dedicated bootstrap step
       # below exercises the real scripts. Keep both until the bootstrap step has
       # been green across a few runs, then collapse this into the bootstrap call.
       - name: Set up synthetic bare dotfiles repo (Linux/macOS)
@@ -51,7 +81,7 @@ jobs:
           set -euo pipefail
           # Do not hijack git's global default branch. Instance default is
           # `main` (landing); the named baseline is `system`.
-          dotfiles() { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" "$@"; }
+          dotfiles() { git --git-dir="$HOME/.local/share/dotfiles.git/" --work-tree="$HOME" "$@"; }
 
           # cd to $HOME — git pathspecs are CWD-relative, and GHA puts us inside
           # the workspace which is a subdir of $HOME, so `.gitignore` would
@@ -77,17 +107,28 @@ jobs:
           echo "[validate-timer] push workspace HEAD -> /tmp/dotfiles-remote.git refs/heads/ci-machine"
           git -C "$GITHUB_WORKSPACE" push /tmp/dotfiles-remote.git "HEAD:refs/heads/ci-machine"
 
-          # README step 2: git clone --bare <remote-url> $HOME/.dotfiles
-          echo "[validate-timer] git clone --bare /tmp/dotfiles-remote.git \"\$HOME/.dotfiles\""
-          git clone --bare /tmp/dotfiles-remote.git "$HOME/.dotfiles"
+          # README step 2: git clone --bare <remote-url> $HOME/.local/share/dotfiles.git
+          echo "[validate-timer] git clone --bare /tmp/dotfiles-remote.git \"\$HOME/.local/share/dotfiles.git\""
+          mkdir -p "$HOME/.local/share"
+          git clone --bare /tmp/dotfiles-remote.git "$HOME/.local/share/dotfiles.git"
 
           echo "[validate-timer] dotfiles config status.showUntrackedFiles no"
           dotfiles config status.showUntrackedFiles no
           echo "[validate-timer] dotfiles config dotfiles.systemRef system"
           dotfiles config --local dotfiles.systemRef system
 
-          echo "[validate-timer] dotfiles checkout system -- .gitignore .dotfiles/"
-          dotfiles checkout system -- .gitignore .dotfiles/
+          echo "[validate-timer] dotfiles checkout system -- .gitignore .local/share/dotfiles/"
+          dotfiles checkout system -- .gitignore .local/share/dotfiles/
+          echo "[validate-timer] git add -A must not stage the bare repo"
+          dotfiles add -A
+          if dotfiles diff --cached --name-only | grep -F 'dotfiles.git/'; then
+            echo "FAIL: git add -A staged the bare repo"
+            dotfiles reset -q
+            exit 1
+          fi
+          dotfiles reset -q
+          echo "[validate-timer] check-ignore shields the git dir"
+          dotfiles check-ignore -v .local/share/dotfiles.git/HEAD
           # Park HEAD on the machine branch so the init commit never lands on
           # GitHub's default (main) or on the system baseline.
           echo "[validate-timer] symbolic-ref HEAD refs/heads/ci-machine"
@@ -111,7 +152,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           # Do not hijack git's global default branch. Instance default is
           # `main` (landing); the named baseline is `system`.
-          function dotfiles { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" @args }
+          function dotfiles { git --git-dir="$HOME/.local/share/dotfiles.git/" --work-tree="$HOME" @args }
 
           $ws = $env:GITHUB_WORKSPACE
 
@@ -138,17 +179,28 @@ jobs:
           Write-Host "[validate-timer] push workspace HEAD -> C:\dotfiles-remote.git refs/heads/ci-machine"
           git -C "$ws" push C:\dotfiles-remote.git "HEAD:refs/heads/ci-machine"
 
-          # README step 2: git clone --bare <remote-url> $HOME/.dotfiles
-          Write-Host "[validate-timer] git clone --bare C:\dotfiles-remote.git `"$HOME/.dotfiles`""
-          git clone --bare C:\dotfiles-remote.git "$HOME/.dotfiles"
+          # README step 2: git clone --bare <remote-url> $HOME/.local/share/dotfiles.git
+          Write-Host "[validate-timer] git clone --bare C:\dotfiles-remote.git `"$HOME/.local/share/dotfiles.git`""
+          New-Item -ItemType Directory -Force -Path "$HOME/.local/share" | Out-Null
+          git clone --bare C:\dotfiles-remote.git "$HOME/.local/share/dotfiles.git"
 
           Write-Host "[validate-timer] dotfiles config status.showUntrackedFiles no"
           dotfiles config status.showUntrackedFiles no
           Write-Host "[validate-timer] dotfiles config dotfiles.systemRef system"
           dotfiles config --local dotfiles.systemRef system
 
-          Write-Host "[validate-timer] dotfiles checkout system -- .gitignore .dotfiles/"
-          dotfiles checkout system -- .gitignore .dotfiles/
+          Write-Host "[validate-timer] dotfiles checkout system -- .gitignore .local/share/dotfiles/"
+          dotfiles checkout system -- .gitignore .local/share/dotfiles/
+          Write-Host "[validate-timer] git add -A must not stage the bare repo"
+          dotfiles add -A
+          if ((dotfiles diff --cached --name-only) -match 'dotfiles\.git/') {
+            dotfiles reset -q
+            throw 'FAIL: git add -A staged the bare repo'
+          }
+          dotfiles reset -q
+          Write-Host "[validate-timer] check-ignore shields the git dir"
+          dotfiles check-ignore -v .local/share/dotfiles.git/HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'FAIL: git dir is not ignored' }
           Write-Host "[validate-timer] symbolic-ref HEAD refs/heads/ci-machine"
           dotfiles symbolic-ref HEAD refs/heads/ci-machine
 
@@ -163,9 +215,33 @@ jobs:
           dotfiles push -u origin HEAD
           Write-Host "[validate-timer] bare repo setup done (Windows)"
 
+      - name: Synthetic home does not stage ignored paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotfiles() { git --git-dir="$HOME/.local/share/dotfiles.git/" --work-tree="$HOME" "$@"; }
+          cd "$HOME"
+          printf 'x\n' > .local/share/dotfiles/not-shipped.txt
+          dotfiles add .local/share/dotfiles/not-shipped.txt || true
+          if dotfiles diff --cached --name-only | grep -F not-shipped.txt; then
+            echo "FAIL: git add staged an allowlist miss"
+            exit 1
+          fi
+          dotfiles reset -q || true
+          rm -f .local/share/dotfiles/not-shipped.txt
+          printf '\n# ci-touch\n' >> .local/share/dotfiles/bootstrap.sh
+          dotfiles status --porcelain | grep -F '.local/share/dotfiles/bootstrap.sh'
+          dotfiles checkout -- .local/share/dotfiles/bootstrap.sh
+          mkdir -p "$HOME/.local/state/dotfiles" "$HOME/.cache/dotfiles/githooks-runner"
+          : > "$HOME/.local/state/dotfiles/auto-commit.sh"
+          : > "$HOME/.cache/dotfiles/githooks-runner/pyvenv.cfg"
+          status=$(dotfiles status --porcelain)
+          [ -z "$status" ] || { echo "FAIL: status not empty:"; echo "$status"; exit 1; }
+          echo "[validate-timer] synthetic home ignore behavior ok"
+
       # ── Bootstrap smoke test: run the REAL tracked bootstrap script ────────
-      # Drives .dotfiles/bootstrap.{sh,ps1} against the synthetic remote into a
-      # FRESH git-dir (separate from the inline $HOME/.dotfiles above), asserting
+      # Drives .local/share/dotfiles/bootstrap.{sh,ps1} against the synthetic remote into a
+      # FRESH git-dir (separate from the inline $HOME/.local/share/dotfiles.git above), asserting
       # a clean checkout + showUntrackedFiles=no. Two paths are exercised:
       #   Test 1 (arguments): --repo/--branch ci-machine, fully non-interactive,
       #     asserting HEAD lands on ci-machine (proves the --branch arg took
@@ -175,31 +251,60 @@ jobs:
       #     as a branch on the synthetic remote, then run with -y and assert HEAD
       #     lands on the detected name with no prompt/hang — a real end-to-end
       #     check of the -y auto-accept precedence.
-      - name: Bootstrap smoke test (Linux)
-        if: runner.os == 'Linux'
+      - name: Bootstrap smoke test (Linux/macOS)
+        if: runner.os == 'Linux' || runner.os == 'macOS'
         shell: bash
         run: |
           set -euo pipefail
+
+          # Parent directory missing: bootstrap must create $HOME/.local/share.
+          # A separate HOME keeps this off the synthetic install.
+          FRESH="$RUNNER_TEMP/fresh-home"
+          rm -rf "$FRESH"
+          mkdir -p "$FRESH"
+          test ! -d "$FRESH/.local"
+          HOME="$FRESH" bash "$GITHUB_WORKSPACE/.local/share/dotfiles/bootstrap.sh" \
+            --repo /tmp/dotfiles-remote.git --branch ci-machine
+          test -d "$FRESH/.local/share/dotfiles.git/objects"
+          test -f "$FRESH/.local/share/dotfiles/bootstrap.sh"
+          test ! -e "$FRESH/.local/share/dotfiles/HEAD"
+          test ! -d "$FRESH/.local/share/dotfiles/objects"
+          test ! -e "$FRESH/.dotfiles"
+          echo "[validate-timer] fresh-home bootstrap created .local/share and split git dir from tool dir"
 
           # We run a tweaked copy with GITDIR redirected to a fresh dir so the
           # smoke test does not touch the runner's real dotfiles. The
           # branch-resolution logic (arguments, -y, prompt, TTY guard) is
           # preserved verbatim. (The script no longer reloads the shell.)
           make_ci_copy() {  # $1 = git-dir to use
-            sed -e 's#\$HOME/\.dotfiles#'"$1"'#g' \
-                "$GITHUB_WORKSPACE/.dotfiles/bootstrap.sh"
+            sed -e 's#\$HOME/\.local/share/dotfiles\.git#'"$1"'#g' \
+                "$GITHUB_WORKSPACE/.local/share/dotfiles/bootstrap.sh"
           }
 
+          MAIN_GIT="$HOME/.local/share/dotfiles.git"
+          MAIN_HEAD=$(git --git-dir="$MAIN_GIT" rev-parse HEAD)
+
           # ── Test 1: ARGUMENTS path (--repo + --branch ci-machine) ──────────
-          GITDIR1="$HOME/.dotfiles-bootstrap"
+          GITDIR1="$RUNNER_TEMP/bootstrap-gitdir"
           dotfiles1() { git --git-dir="$GITDIR1/" --work-tree="$HOME" "$@"; }
           echo "[validate-timer] Test 1: bootstrap.sh --branch ci-machine -> $GITDIR1"
           make_ci_copy "$GITDIR1" > /tmp/bootstrap-ci.sh
+          grep -F "$GITDIR1" /tmp/bootstrap-ci.sh >/dev/null
+          grep -F '$HOME/.local/share/dotfiles/' /tmp/bootstrap-ci.sh >/dev/null \
+            || { echo "FAIL: CI copy rewrote the tool dir"; exit 1; }
+          if grep -F '$HOME/.local/share/dotfiles.git' /tmp/bootstrap-ci.sh >/dev/null; then
+            echo "FAIL: CI copy still contains the real git dir"
+            exit 1
+          fi
           bash /tmp/bootstrap-ci.sh --repo /tmp/dotfiles-remote.git --branch ci-machine
 
           echo "[validate-timer] Test 1: assert clean checkout (no pending changes)"
           test -f "$HOME/.gitignore" || { echo "FAIL: .gitignore not checked out"; exit 1; }
-          test -f "$HOME/.dotfiles/bootstrap.sh" || { echo "FAIL: .dotfiles/bootstrap.sh not checked out"; exit 1; }
+          test -f "$HOME/.local/share/dotfiles/bootstrap.sh" || { echo "FAIL: .local/share/dotfiles/bootstrap.sh not checked out"; exit 1; }
+          test -f "$GITDIR1/HEAD" && test -d "$GITDIR1/objects"
+          test ! -e "$HOME/.local/share/dotfiles/HEAD"
+          test ! -d "$HOME/.local/share/dotfiles/objects"
+          test ! -e "$HOME/.dotfiles"
           STATUS=$(dotfiles1 status --porcelain)
           [ -z "$STATUS" ] || { echo "FAIL: dirty checkout:"; echo "$STATUS"; exit 1; }
 
@@ -223,7 +328,7 @@ jobs:
             DETECTED="$(hostname)"
           fi
           echo "[validate-timer] Test 2: detected branch name = '$DETECTED'"
-          GITDIR2="$HOME/.dotfiles-bootstrap-y"
+          GITDIR2="$RUNNER_TEMP/bootstrap-gitdir-y"
           dotfiles2() { git --git-dir="$GITDIR2/" --work-tree="$HOME" "$@"; }
           make_ci_copy "$GITDIR2" > /tmp/bootstrap-ci-y.sh
 
@@ -262,7 +367,10 @@ jobs:
             [ "$RC" -ne 0 ] || { echo "FAIL: expected clone to fail on the space-y branch name"; exit 1; }
             echo "[validate-timer] Test 2 ok (Linux, non-interactive -y resolves to '$DETECTED'; clone failed on space-y ref as expected)"
           fi
-          echo "[validate-timer] bootstrap smoke test ok (Linux)"
+          NOW=$(git --git-dir="$MAIN_GIT" rev-parse HEAD)
+          [ "$NOW" = "$MAIN_HEAD" ] || { echo "FAIL: bootstrap smoke moved the main git dir HEAD"; exit 1; }
+          git --git-dir="$MAIN_GIT" --work-tree="$HOME" checkout -- .
+          echo "[validate-timer] bootstrap smoke test ok"
 
       - name: Bootstrap smoke test (Windows)
         if: runner.os == 'Windows'
@@ -275,22 +383,50 @@ jobs:
           # branch-resolution logic (-Branch, -y, prompt, interactive guard) is
           # preserved verbatim. (The script no longer reloads the profile.)
           function Make-CiCopy([string]$gitdir, [string]$dest) {
-            $src = Get-Content "$env:GITHUB_WORKSPACE/.dotfiles/bootstrap.ps1" -Raw
-            $src = $src -replace '\$HOME/\.dotfiles', $gitdir
-            Set-Content -Path $dest -Value $src
+            $src = Get-Content "$env:GITHUB_WORKSPACE/.local/share/dotfiles/bootstrap.ps1" -Raw
+            $src = $src.Replace('$HOME/.local/share/dotfiles.git', $gitdir)
+            Set-Content -Path $dest -Value $src -Encoding utf8NoBOM
           }
 
+          # Parent directory missing, on a HOME this process can override.
+          $fresh = Join-Path $env:RUNNER_TEMP 'fresh-home'
+          if (Test-Path $fresh) { Remove-Item -Recurse -Force $fresh }
+          New-Item -ItemType Directory -Force -Path $fresh | Out-Null
+          if (Test-Path (Join-Path $fresh '.local')) { throw 'fresh home unexpectedly has .local' }
+          $env:FRESH_HOME = $fresh
+          $env:BOOTSTRAP_SCRIPT = Join-Path $env:GITHUB_WORKSPACE '.local/share/dotfiles/bootstrap.ps1'
+          & pwsh -NoProfile -Command "Set-Variable -Name HOME -Value `$env:FRESH_HOME -Force; & `$env:BOOTSTRAP_SCRIPT -Repo 'C:\dotfiles-remote.git' -Branch 'ci-machine'"
+          if ($LASTEXITCODE -ne 0) { throw "fresh-home bootstrap exited $LASTEXITCODE" }
+          if (-not (Test-Path (Join-Path $fresh '.local/share/dotfiles.git/objects'))) { throw 'FAIL: fresh-home git dir missing' }
+          if (-not (Test-Path (Join-Path $fresh '.local/share/dotfiles/bootstrap.ps1'))) { throw 'FAIL: fresh-home tool dir missing' }
+          if (Test-Path (Join-Path $fresh '.local/share/dotfiles/HEAD')) { throw 'FAIL: tool dir contains HEAD' }
+          if (Test-Path (Join-Path $fresh '.local/share/dotfiles/objects')) { throw 'FAIL: tool dir contains objects' }
+          if (Test-Path (Join-Path $fresh '.dotfiles')) { throw 'FAIL: fresh home has .dotfiles' }
+          Write-Host "[validate-timer] fresh-home bootstrap created .local/share and split git dir from tool dir"
+
+          $mainGit = Join-Path $HOME '.local/share/dotfiles.git'
+          $mainHead = (git --git-dir="$mainGit" rev-parse HEAD).Trim()
+
           # ── Test 1: ARGUMENTS path (-Repo + -Branch ci-machine) ────────────
-          $gitdir1 = "$HOME/.dotfiles-bootstrap"
+          $gitdir1 = Join-Path $env:RUNNER_TEMP 'bootstrap-gitdir'
           function dotfiles1 { git --git-dir="$gitdir1/" --work-tree="$HOME" @args }
           Write-Host "[validate-timer] Test 1: bootstrap.ps1 -Branch ci-machine -> $gitdir1"
           Make-CiCopy $gitdir1 "$env:RUNNER_TEMP/bootstrap-ci.ps1"
+          $copy = Get-Content "$env:RUNNER_TEMP/bootstrap-ci.ps1" -Raw
+          if ($copy -notlike "*$gitdir1*") { throw 'FAIL: copy missing throwaway git dir' }
+          if ($copy -notlike '*$HOME/.local/share/dotfiles/*') { throw 'FAIL: CI copy rewrote the tool dir' }
+          if ($copy -like '*$HOME/.local/share/dotfiles.git*') { throw 'FAIL: CI copy still contains the real git dir' }
           & pwsh "$env:RUNNER_TEMP/bootstrap-ci.ps1" -Repo C:\dotfiles-remote.git -Branch ci-machine
           if ($LASTEXITCODE -ne 0) { throw "bootstrap.ps1 exited $LASTEXITCODE" }
 
           Write-Host "[validate-timer] Test 1: assert clean checkout (no pending changes)"
           if (-not (Test-Path "$HOME/.gitignore")) { throw "FAIL: .gitignore not checked out" }
-          if (-not (Test-Path "$HOME/.dotfiles/bootstrap.ps1")) { throw "FAIL: .dotfiles/bootstrap.ps1 not checked out" }
+          if (-not (Test-Path "$HOME/.local/share/dotfiles/bootstrap.ps1")) { throw "FAIL: .local/share/dotfiles/bootstrap.ps1 not checked out" }
+          if (-not (Test-Path (Join-Path $gitdir1 'HEAD'))) { throw 'FAIL: throwaway git dir has no HEAD' }
+          if (-not (Test-Path (Join-Path $gitdir1 'objects'))) { throw 'FAIL: throwaway git dir has no objects' }
+          if (Test-Path "$HOME/.local/share/dotfiles/HEAD") { throw 'FAIL: tool dir contains HEAD' }
+          if (Test-Path "$HOME/.local/share/dotfiles/objects") { throw 'FAIL: tool dir contains objects' }
+          if (Test-Path "$HOME/.dotfiles") { throw 'FAIL: ~/.dotfiles was created' }
           $status = dotfiles1 status --porcelain
           if ($status) { throw "FAIL: dirty checkout:`n$status" }
 
@@ -313,7 +449,7 @@ jobs:
           } catch { }
           if (-not $detected) { $detected = $env:COMPUTERNAME }
           Write-Host "[validate-timer] Test 2: detected branch name = '$detected'"
-          $gitdir2 = "$HOME/.dotfiles-bootstrap-y"
+          $gitdir2 = Join-Path $env:RUNNER_TEMP 'bootstrap-gitdir-y'
           function dotfiles2 { git --git-dir="$gitdir2/" --work-tree="$HOME" @args }
           Make-CiCopy $gitdir2 "$env:RUNNER_TEMP/bootstrap-ci-y.ps1"
 
@@ -356,6 +492,10 @@ jobs:
             Write-Host "[validate-timer] Test 2 ok (Windows, non-interactive -y resolves to '$detected'; clone failed on space-y ref as expected)"
           }
           Write-Host "[validate-timer] bootstrap smoke test ok (Windows)"
+          $now = (git --git-dir="$mainGit" rev-parse HEAD).Trim()
+          if ($now -ne $mainHead) { throw 'FAIL: bootstrap smoke moved the main git dir HEAD' }
+          git --git-dir="$mainGit" --work-tree="$HOME" checkout -- .
+          if ($LASTEXITCODE -ne 0) { throw 'FAIL: could not restore the work tree' }
           # In the non-valid-ref else-branch the last native command is the
           # bootstrap whose clone intentionally fails on the space-y ref (exit
           # non-zero), captured into $out. We asserted success above, so the
@@ -369,19 +509,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dotfiles() { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" "$@"; }
+          dotfiles() { git --git-dir="$HOME/.local/share/dotfiles.git/" --work-tree="$HOME" "$@"; }
           cd "$HOME"
 
-          echo "[validate-timer] uv sync --project \$HOME/.dotfiles/githooks-runner"
-          uv sync --project "$HOME/.dotfiles/githooks-runner"
+          echo "[validate-timer] uv sync --project \$HOME/.local/share/dotfiles/githooks-runner"
+          UV_PROJECT_ENVIRONMENT="$HOME/.cache/dotfiles/githooks-runner" \
+            uv sync --project "$HOME/.local/share/dotfiles/githooks-runner"
+          test -f "$HOME/.cache/dotfiles/githooks-runner/pyvenv.cfg"
+          test ! -e "$HOME/.local/share/dotfiles/githooks-runner/.venv"
 
-          echo "[validate-timer] dotfiles config core.hooksPath \$HOME/.dotfiles/.githooks"
-          dotfiles config core.hooksPath "$HOME/.dotfiles/.githooks"
+          echo "[validate-timer] dotfiles config core.hooksPath \$HOME/.local/share/dotfiles/.githooks"
+          dotfiles config core.hooksPath "$HOME/.local/share/dotfiles/.githooks"
           echo "[validate-timer] verify: dotfiles config --get core.hooksPath"
           dotfiles config --get core.hooksPath
 
           echo "[validate-timer] smoke-test: direct pre-commit stub with verbose logging"
-          DOTFILES_GITHOOKS_VERBOSE=1 sh "$HOME/.dotfiles/.githooks/pre-commit" 2>&1 \
+          DOTFILES_GITHOOKS_VERBOSE=1 sh "$HOME/.local/share/dotfiles/.githooks/pre-commit" 2>&1 \
             | tee "$RUNNER_TEMP/githooks-smoke.log"
           grep -q '\[dotfiles_githooks\] pre-commit' "$RUNNER_TEMP/githooks-smoke.log" \
             || { echo "FAIL: pre-commit stub did not invoke runner"; exit 1; }
@@ -400,15 +543,18 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          function dotfiles { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" @args }
+          function dotfiles { git --git-dir="$HOME/.local/share/dotfiles.git/" --work-tree="$HOME" @args }
           Set-Location $HOME
 
-          Write-Host "[validate-timer] uv sync --project `$HOME/.dotfiles/githooks-runner"
-          uv sync --project "$HOME/.dotfiles/githooks-runner"
+          Write-Host "[validate-timer] uv sync --project `$HOME/.local/share/dotfiles/githooks-runner"
+          $env:UV_PROJECT_ENVIRONMENT = "$HOME/.cache/dotfiles/githooks-runner"
+          uv sync --project "$HOME/.local/share/dotfiles/githooks-runner"
           if ($LASTEXITCODE -ne 0) { throw "uv sync failed (exit $LASTEXITCODE)" }
+          if (-not (Test-Path "$HOME/.cache/dotfiles/githooks-runner/pyvenv.cfg")) { throw 'FAIL: cache venv missing' }
+          if (Test-Path "$HOME/.local/share/dotfiles/githooks-runner/.venv") { throw 'FAIL: project-local .venv was created' }
 
-          Write-Host "[validate-timer] dotfiles config core.hooksPath `$HOME/.dotfiles/.githooks"
-          dotfiles config core.hooksPath "$HOME/.dotfiles/.githooks"
+          Write-Host "[validate-timer] dotfiles config core.hooksPath `$HOME/.local/share/dotfiles/.githooks"
+          dotfiles config core.hooksPath "$HOME/.local/share/dotfiles/.githooks"
           Write-Host "[validate-timer] verify: dotfiles config --get core.hooksPath"
           dotfiles config --get core.hooksPath
 
@@ -438,8 +584,8 @@ jobs:
           set -euo pipefail
           home="$RUNNER_TEMP/gitid-home"
           mkdir -p "$home"
-          echo "[validate-timer] copy .dotfiles/gitconfig.example -> \$HOME/.gitconfig"
-          cp .dotfiles/gitconfig.example "$home/.gitconfig"
+          echo "[validate-timer] copy .local/share/dotfiles/gitconfig.example -> \$HOME/.gitconfig"
+          cp .local/share/dotfiles/gitconfig.example "$home/.gitconfig"
           echo "[validate-timer] write per-machine \$HOME/.gitconfig.local with sentinel email"
           printf '[user]\n\temail = sentinel@dotfiles.test\n' > "$home/.gitconfig.local"
 
@@ -462,8 +608,8 @@ jobs:
           # it (even as $home, names are case-insensitive) throws. Use $gitidHome.
           $gitidHome = Join-Path $env:RUNNER_TEMP 'gitid-home'
           New-Item -ItemType Directory -Force -Path $gitidHome | Out-Null
-          Write-Host "[validate-timer] copy .dotfiles/gitconfig.example -> `$HOME/.gitconfig"
-          Copy-Item '.dotfiles/gitconfig.example' (Join-Path $gitidHome '.gitconfig') -Force
+          Write-Host "[validate-timer] copy .local/share/dotfiles/gitconfig.example -> `$HOME/.gitconfig"
+          Copy-Item '.local/share/dotfiles/gitconfig.example' (Join-Path $gitidHome '.gitconfig') -Force
           Write-Host "[validate-timer] write per-machine `$HOME/.gitconfig.local with sentinel email"
           "[user]`n`temail = sentinel@dotfiles.test" | Set-Content (Join-Path $gitidHome '.gitconfig.local')
 
@@ -486,13 +632,13 @@ jobs:
           Write-Host "[validate-timer] PASS: [include] of ~/.gitconfig.local resolves (Windows)"
 
       # ── README "dotfiles doctor": health-check PASSes after full setup ─────
-      - name: "dotfiles doctor --skip-network (Linux)"
-        if: runner.os == 'Linux'
+      - name: "dotfiles doctor --skip-network (Linux/macOS)"
+        if: runner.os == 'Linux' || runner.os == 'macOS'
         shell: bash
         run: |
           set -euo pipefail
           echo "[validate-timer] dotfiles-doctor.sh --skip-network (expect all hard checks PASS)"
-          out="$(bash "$HOME/.dotfiles/dotfiles-doctor.sh" --skip-network 2>&1)" || {
+          out="$(bash "$HOME/.local/share/dotfiles/dotfiles-doctor.sh" --skip-network 2>&1)" || {
             echo "$out"
             echo "FAIL: doctor exited non-zero after full setup"
             exit 1
@@ -500,6 +646,12 @@ jobs:
           echo "$out"
           echo "$out" | grep -q 'doctor: all hard checks PASSED' \
             || { echo "FAIL: doctor did not report all hard checks PASSED"; exit 1; }
+          echo "$out" | grep -F "core.hooksPath = $HOME/.local/share/dotfiles/.githooks" \
+            || { echo "FAIL: hooks path"; exit 1; }
+          echo "$out" | grep -q 'githooks-runner venv synced' \
+            || { echo "FAIL: venv not reported synced"; exit 1; }
+          echo "$out" | grep -F "$HOME/.local/share/dotfiles.git" \
+            || { echo "FAIL: doctor setup line did not name the git dir"; exit 1; }
           echo "[validate-timer] doctor ok (Linux)"
 
       - name: "dotfiles doctor -SkipNetwork (Windows)"
@@ -508,12 +660,19 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           Write-Host "[validate-timer] dotfiles-doctor.ps1 -SkipNetwork (expect all hard checks PASS)"
-          $out = & (Join-Path $env:USERPROFILE '.dotfiles\dotfiles-doctor.ps1') -SkipNetwork 2>&1 | Out-String
+          $out = & (Join-Path $env:USERPROFILE '.local\share\dotfiles\dotfiles-doctor.ps1') -SkipNetwork 2>&1 | Out-String
           $code = $LASTEXITCODE
           Write-Host $out
           if ($code -ne 0) { throw "FAIL: doctor exited non-zero ($code) after full setup" }
           if ($out -notmatch 'doctor: all hard checks PASSED') {
               throw "FAIL: doctor did not report all hard checks PASSED"
+          }
+          if ($out -notmatch [regex]::Escape("$HOME/.local/share/dotfiles/.githooks")) {
+              throw 'FAIL: hooks path'
+          }
+          if ($out -notmatch 'githooks-runner venv synced') { throw 'FAIL: venv not reported synced' }
+          if ($out -notmatch [regex]::Escape("$HOME/.local/share/dotfiles.git")) {
+              throw 'FAIL: doctor setup line did not name the git dir'
           }
           Write-Host "[validate-timer] doctor ok (Windows)"
           # The last native command run was doctor (& ...). A healthy doctor
@@ -525,7 +684,7 @@ jobs:
       # The positive test above only proves doctor reports all-PASS in a healthy
       # setup. These steps deliberately construct each hard-FAIL precondition in
       # an *isolated*, throwaway bare repo (pointed at via --git-dir/--work-tree,
-      # so the healthy $HOME/.dotfiles is untouched) and assert doctor (a) exits
+      # so the healthy $HOME/.local/share/dotfiles.git is untouched) and assert doctor (a) exits
       # NON-ZERO and (b) prints the specific FAIL message for that condition.
       #
       # Hard-FAIL checks in dotfiles-doctor.{sh,ps1}:
@@ -543,12 +702,12 @@ jobs:
       #                                          reliably-reproducible signals.
       # Network/SSH FAILs (no remote / unreachable) are out of scope here: the
       # positive + negative matrix runs with --skip-network.
-      - name: "dotfiles doctor detects bad states (Linux)"
-        if: runner.os == 'Linux'
+      - name: "dotfiles doctor detects bad states (Linux/macOS)"
+        if: runner.os == 'Linux' || runner.os == 'macOS'
         shell: bash
         run: |
           set -euo pipefail
-          doctor="$HOME/.dotfiles/dotfiles-doctor.sh"
+          doctor="$HOME/.local/share/dotfiles/dotfiles-doctor.sh"
 
           # mkbare <gitdir> <worktree>: minimal bare repo + work-tree with one
           # committed tracked file, so we can later dirty it. No hooksPath, no
@@ -589,42 +748,81 @@ jobs:
           gd="$base/hookspath.git"; wt="$base/hookspath-wt"; mkbare "$gd" "$wt"
           git --git-dir="$gd" config status.showUntrackedFiles no
           assert_detects "core.hooksPath unset" \
-            '^  FAIL  core\.hooksPath is' "$gd" "$wt"
+            '^  FAIL  core\.hooksPath is .*expected .*\.local/share/dotfiles/\.githooks' "$gd" "$wt"
 
-          # Case 3: status.showUntrackedFiles unset.
-          gd="$base/sut.git"; wt="$base/sut-wt"; mkbare "$gd" "$wt"
+          # hooksPath pointing inside the git dir is the old layout and must FAIL.
+          gd="$base/hooks-in-git.git"; wt="$base/hooks-in-git-wt"; mkbare "$gd" "$wt"
           git --git-dir="$gd" config core.hooksPath "$gd/.githooks"
-          assert_detects "status.showUntrackedFiles != no" \
-            '^  FAIL  status\.showUntrackedFiles is' "$gd" "$wt"
+          git --git-dir="$gd" config status.showUntrackedFiles no
+          assert_detects "core.hooksPath inside git dir" \
+            '^  FAIL  core\.hooksPath is .*expected .*\.local/share/dotfiles/\.githooks' "$gd" "$wt"
+
+          # Case 3: status.showUntrackedFiles unset. Hooks are repaired to the
+          # work-tree tool dir, so this failure must not be a hooks failure.
+          gd="$base/sut.git"; wt="$base/sut-wt"; mkbare "$gd" "$wt"
+          git --git-dir="$gd" config core.hooksPath "$wt/.local/share/dotfiles/.githooks"
+          echo "[validate-timer] negative: showUntrackedFiles, hooks repaired"
+          out="$(bash "$doctor" --git-dir "$gd" --work-tree "$wt" --skip-network 2>&1)" && code=0 || code=$?
+          echo "$out"
+          [ "$code" -ne 0 ] || { echo "FAIL: doctor exited 0"; exit 1; }
+          echo "$out" | grep -Eq '^  PASS  core\.hooksPath' \
+            || { echo "FAIL: hooks check did not pass"; exit 1; }
+          echo "$out" | grep -Eq '^  FAIL  status\.showUntrackedFiles is' \
+            || { echo "FAIL: showUntrackedFiles message missing"; exit 1; }
 
           # Case 5: dirty work-tree (uncommitted change to a tracked file).
           gd="$base/dirty.git"; wt="$base/dirty-wt"; mkbare "$gd" "$wt"
-          git --git-dir="$gd" config core.hooksPath "$gd/.githooks"
+          git --git-dir="$gd" config core.hooksPath "$wt/.local/share/dotfiles/.githooks"
           git --git-dir="$gd" config status.showUntrackedFiles no
           echo changed > "$wt/tracked.txt"
           assert_detects "work-tree dirty" \
             '^  FAIL  work-tree has uncommitted tracked changes' "$gd" "$wt"
 
-          # Case 4: githooks-runner venv not synced (runner dir present, but its
-          # pyproject pins an unsatisfiable dep and there is no synced .venv, so
-          # `uv sync --frozen --check` fails). uv is on PATH (asserted positive).
+          # Case 4: githooks-runner venv not synced. The bad project is in the
+          # throwaway work tree, not the already-synced home tool dir.
           gd="$base/venv.git"; wt="$base/venv-wt"; mkbare "$gd" "$wt"
-          git --git-dir="$gd" config core.hooksPath "$gd/.githooks"
+          git --git-dir="$gd" config core.hooksPath "$wt/.local/share/dotfiles/.githooks"
           git --git-dir="$gd" config status.showUntrackedFiles no
-          mkdir -p "$gd/githooks-runner"
+          mkdir -p "$wt/.local/share/dotfiles/githooks-runner"
           printf '[project]\nname = "neg"\nversion = "0"\nrequires-python = ">=3.9"\ndependencies = ["this-pkg-does-not-exist-zzzz==9.9.9"]\n' \
-            > "$gd/githooks-runner/pyproject.toml"
+            > "$wt/.local/share/dotfiles/githooks-runner/pyproject.toml"
           assert_detects "venv not synced" \
             '^  FAIL  githooks-runner venv not synced' "$gd" "$wt"
 
-          echo "[validate-timer] doctor negative tests ok (Linux)"
+          echo "[validate-timer] positive isolation: throwaway work tree, home tool dir moved aside"
+          doctor_copy="$RUNNER_TEMP/dotfiles-doctor-iso.sh"
+          cp "$doctor" "$doctor_copy"
+          tool_home="$HOME/.local/share/dotfiles"
+          tool_aside="$RUNNER_TEMP/tool-aside"
+          rm -rf "$tool_aside"
+          mv "$tool_home" "$tool_aside"
+          iso_ok=0
+          if (
+            set -e
+            gd="$base/iso.git"; wt="$base/iso-wt"; mkbare "$gd" "$wt"
+            mkdir -p "$wt/.local/share/dotfiles"
+            cp -a "$tool_aside/githooks-runner" "$wt/.local/share/dotfiles/githooks-runner"
+            git --git-dir="$gd" config core.hooksPath "$wt/.local/share/dotfiles/.githooks"
+            git --git-dir="$gd" config status.showUntrackedFiles no
+            UV_PROJECT_ENVIRONMENT="$HOME/.cache/dotfiles/githooks-runner" \
+              uv sync --project "$wt/.local/share/dotfiles/githooks-runner" --frozen
+            out="$(bash "$doctor_copy" --git-dir "$gd" --work-tree "$wt" --skip-network 2>&1)"
+            printf '%s\n' "$out"
+            echo "$out" | grep -q 'doctor: all hard checks PASSED'
+          ); then
+            iso_ok=1
+          fi
+          mv "$tool_aside" "$tool_home"
+          [ "$iso_ok" = 1 ] || { echo "FAIL: positive isolation"; exit 1; }
+
+          echo "[validate-timer] doctor negative tests ok"
 
       - name: "dotfiles doctor detects bad states (Windows)"
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $doctor = Join-Path $env:USERPROFILE '.dotfiles\dotfiles-doctor.ps1'
+          $doctor = Join-Path $env:USERPROFILE '.local\share\dotfiles\dotfiles-doctor.ps1'
 
           # New-BareRepo: minimal bare repo + work-tree with one committed tracked
           # file. No hooksPath / showUntrackedFiles / githooks-runner — a clean
@@ -658,28 +856,68 @@ jobs:
           # Case 2: core.hooksPath unset.
           $gd = "$base\hookspath.git"; $wt = "$base\hookspath-wt"; New-BareRepo $gd $wt
           git --git-dir="$gd" config status.showUntrackedFiles no
-          Assert-Detects 'core.hooksPath unset' '(?m)^  FAIL  core\.hooksPath is' $gd $wt
+          Assert-Detects 'core.hooksPath unset' '(?m)^  FAIL  core\.hooksPath is[\s\S]*\.local/share/dotfiles/\.githooks' $gd $wt
 
-          # Case 3: status.showUntrackedFiles unset.
-          $gd = "$base\sut.git"; $wt = "$base\sut-wt"; New-BareRepo $gd $wt
+          # hooksPath pointing inside the git dir is the old layout and must FAIL.
+          $gd = "$base\hooks-in-git.git"; $wt = "$base\hooks-in-git-wt"; New-BareRepo $gd $wt
           git --git-dir="$gd" config core.hooksPath "$gd\.githooks"
-          Assert-Detects 'status.showUntrackedFiles != no' '(?m)^  FAIL  status\.showUntrackedFiles is' $gd $wt
+          git --git-dir="$gd" config status.showUntrackedFiles no
+          Assert-Detects 'core.hooksPath inside git dir' '(?m)^  FAIL  core\.hooksPath is[\s\S]*\.local/share/dotfiles/\.githooks' $gd $wt
+
+          # Case 3: status.showUntrackedFiles unset. Hooks repaired to the work-tree tool dir.
+          $gd = "$base\sut.git"; $wt = "$base\sut-wt"; New-BareRepo $gd $wt
+          git --git-dir="$gd" config core.hooksPath "$wt/.local/share/dotfiles/.githooks"
+          Write-Host "[validate-timer] negative: showUntrackedFiles, hooks repaired"
+          $out = & $doctor -GitDir $gd -WorkTree $wt -SkipNetwork 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $out
+          if ($code -eq 0) { throw 'FAIL: doctor exited 0' }
+          if ($out -notmatch '(?m)^  PASS  core\.hooksPath') { throw 'FAIL: hooks check did not pass' }
+          if ($out -notmatch '(?m)^  FAIL  status\.showUntrackedFiles is') { throw 'FAIL: showUntrackedFiles message missing' }
 
           # Case 5: dirty work-tree.
           $gd = "$base\dirty.git"; $wt = "$base\dirty-wt"; New-BareRepo $gd $wt
-          git --git-dir="$gd" config core.hooksPath "$gd\.githooks"
+          git --git-dir="$gd" config core.hooksPath "$wt/.local/share/dotfiles/.githooks"
           git --git-dir="$gd" config status.showUntrackedFiles no
           'changed' | Set-Content (Join-Path $wt 'tracked.txt')
           Assert-Detects 'work-tree dirty' '(?m)^  FAIL  work-tree has uncommitted tracked changes' $gd $wt
 
-          # Case 4: githooks-runner venv not synced (unsatisfiable dep, no synced .venv).
+          # Case 4: bad project lives in the throwaway work tree.
           $gd = "$base\venv.git"; $wt = "$base\venv-wt"; New-BareRepo $gd $wt
-          git --git-dir="$gd" config core.hooksPath "$gd\.githooks"
+          git --git-dir="$gd" config core.hooksPath "$wt/.local/share/dotfiles/.githooks"
           git --git-dir="$gd" config status.showUntrackedFiles no
-          New-Item -ItemType Directory -Force -Path "$gd\githooks-runner" | Out-Null
+          $badRunner = Join-Path $wt '.local/share/dotfiles/githooks-runner'
+          New-Item -ItemType Directory -Force -Path $badRunner | Out-Null
           "[project]`nname = `"neg`"`nversion = `"0`"`nrequires-python = `">=3.9`"`ndependencies = [`"this-pkg-does-not-exist-zzzz==9.9.9`"]" |
-            Set-Content "$gd\githooks-runner\pyproject.toml"
+            Set-Content (Join-Path $badRunner 'pyproject.toml')
           Assert-Detects 'venv not synced' '(?m)^  FAIL  githooks-runner venv not synced' $gd $wt
+
+          Write-Host "[validate-timer] positive isolation: throwaway work tree, home tool dir moved aside"
+          $doctorCopy = Join-Path $env:RUNNER_TEMP 'dotfiles-doctor-iso.ps1'
+          Copy-Item $doctor $doctorCopy
+          $toolHome = Join-Path $HOME '.local/share/dotfiles'
+          $toolAside = Join-Path $env:RUNNER_TEMP 'tool-aside'
+          if (Test-Path $toolAside) { Remove-Item -Recurse -Force $toolAside }
+          Move-Item $toolHome $toolAside
+          try {
+            $gd = "$base\iso.git"; $wt = "$base\iso-wt"; New-BareRepo $gd $wt
+            $runner = Join-Path $wt '.local/share/dotfiles/githooks-runner'
+            New-Item -ItemType Directory -Force -Path (Split-Path $runner) | Out-Null
+            Copy-Item (Join-Path $toolAside 'githooks-runner') $runner -Recurse
+            git --git-dir="$gd" config core.hooksPath "$wt/.local/share/dotfiles/.githooks"
+            git --git-dir="$gd" config status.showUntrackedFiles no
+            $env:UV_PROJECT_ENVIRONMENT = "$HOME/.cache/dotfiles/githooks-runner"
+            uv sync --project $runner --frozen
+            if ($LASTEXITCODE -ne 0) { throw "throwaway uv sync failed (exit $LASTEXITCODE)" }
+            $out = & $doctorCopy -GitDir $gd -WorkTree $wt -SkipNetwork 2>&1 | Out-String
+            $code = $LASTEXITCODE
+            Write-Host $out
+            if ($code -ne 0) { throw "FAIL: isolation doctor exited $code" }
+            if ($out -notmatch 'doctor: all hard checks PASSED') { throw 'FAIL: isolation did not pass' }
+          } finally {
+            if (Test-Path $toolHome) { Remove-Item -Recurse -Force $toolHome }
+            Move-Item $toolAside $toolHome
+          }
 
           Write-Host "[validate-timer] doctor negative tests ok (Windows)"
           # The last native command run was doctor (exit 1, intentionally). pwsh
@@ -691,8 +929,30 @@ jobs:
       - name: Install systemd timer
         if: runner.os == 'Linux'
         run: |
+          set -euo pipefail
+          decoy="$RUNNER_TEMP/xdg-decoy"
+          rm -rf "$decoy"
+          mkdir -p "$decoy"
+          export XDG_DATA_HOME="$decoy/data"
+          export XDG_STATE_HOME="$decoy/state"
+          export XDG_CACHE_HOME="$decoy/cache"
+          export XDG_CONFIG_HOME="$decoy/config"
           echo "[validate-timer] dotfiles-timer.sh install"
-          bash .dotfiles/dotfiles-timer.sh install
+          bash .local/share/dotfiles/dotfiles-timer.sh install
+          test -d "$HOME/.local/state/dotfiles"
+          test -f "$HOME/.local/state/dotfiles/auto-commit.sh"
+          grep -F "$HOME/.local/share/dotfiles.git" "$HOME/.local/state/dotfiles/auto-commit.sh"
+          grep -F "WTREE='$HOME'" "$HOME/.local/state/dotfiles/auto-commit.sh"
+          grep -F "ExecStart=$HOME/.local/state/dotfiles/auto-commit.sh" \
+            "$HOME/.config/systemd/user/dotfiles-git-commit.service"
+          test ! -e "$HOME/.local/share/dotfiles.git/auto-commit.sh"
+          test ! -e "$HOME/.local/share/dotfiles/auto-commit.sh"
+          test ! -e "$HOME/.dotfiles"
+          test ! -e "$decoy/data/dotfiles"
+          test ! -e "$decoy/state/dotfiles"
+          test ! -e "$decoy/cache/dotfiles"
+          test ! -e "$decoy/config/systemd/user/dotfiles-git-commit.service"
+          test ! -e "$decoy/config/systemd/user/dotfiles-git-commit.timer"
           echo "[validate-timer] dotfiles-timer.sh install ok"
 
       # macOS: install writes the plist; `launchctl bootstrap` needs a GUI
@@ -702,18 +962,66 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           set -euo pipefail
+          decoy="$RUNNER_TEMP/xdg-decoy"
+          rm -rf "$decoy"
+          mkdir -p "$decoy"
+          export XDG_DATA_HOME="$decoy/data"
+          export XDG_STATE_HOME="$decoy/state"
+          export XDG_CACHE_HOME="$decoy/cache"
+          export XDG_CONFIG_HOME="$decoy/config"
           echo "[validate-timer] dotfiles-timer.sh install (launchd; bootstrap may soft-skip)"
-          bash .dotfiles/dotfiles-timer.sh install || true
-          test -f "$HOME/Library/LaunchAgents/dotfiles-git-commit.plist" \
-            || { echo "FAIL: plist not written"; exit 1; }
+          bash .local/share/dotfiles/dotfiles-timer.sh install
+          test -d "$HOME/.local/state/dotfiles"
+          test -f "$HOME/.local/state/dotfiles/auto-commit.sh"
+          test -f "$HOME/Library/LaunchAgents/dotfiles-git-commit.plist"
+          test ! -e "$HOME/Library/Logs/dotfiles-git-commit"
+          test ! -e "$HOME/Library/Application Support/dotfiles"
+          test ! -e "$HOME/.dotfiles"
+          test ! -e "$decoy/data/dotfiles"
+          test ! -e "$decoy/state/dotfiles"
           echo "[validate-timer] dotfiles-timer.sh install ok (plist present)"
 
       - name: Install Task Scheduler task
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $decoy = Join-Path $env:RUNNER_TEMP 'xdg-decoy'
+          if (Test-Path $decoy) { Remove-Item -Recurse -Force $decoy }
+          New-Item -ItemType Directory -Force -Path $decoy | Out-Null
+          $env:XDG_DATA_HOME = Join-Path $decoy 'data'
+          $env:XDG_STATE_HOME = Join-Path $decoy 'state'
+          $env:XDG_CACHE_HOME = Join-Path $decoy 'cache'
+          $env:XDG_CONFIG_HOME = Join-Path $decoy 'config'
           Write-Host "[validate-timer] dotfiles-timer.ps1 install"
-          pwsh .dotfiles/dotfiles-timer.ps1 install
+          pwsh .local/share/dotfiles/dotfiles-timer.ps1 install
+          if ($LASTEXITCODE -ne 0) { throw "install exited $LASTEXITCODE" }
+          $state = Join-Path $HOME '.local/state/dotfiles'
+          $commit = Join-Path $state 'auto-commit.ps1'
+          if (-not (Test-Path $commit)) { throw 'FAIL: missing auto-commit.ps1' }
+          $task = Get-ScheduledTask -TaskName 'dotfiles-git-commit' -ErrorAction SilentlyContinue
+          $loopFile = Join-Path $state 'auto-commit-loop.ps1'
+          $vbs = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\DotfilesAutoCommit.vbs'
+          if ($task) {
+            Write-Host '[validate-timer] admin install: Task Scheduler'
+          } else {
+            if (-not (Test-Path $loopFile)) { throw 'FAIL: user-mode loop script missing' }
+            if (-not (Test-Path $vbs)) { throw 'FAIL: Startup VBS missing' }
+            $loop = Get-Content $loopFile -Raw
+            if ($loop -match [regex]::Escape($env:TEMP)) { throw 'FAIL: loop log still uses TEMP' }
+            $log = "$HOME/.local/state/dotfiles/auto-commit.log"
+            if ($loop -notlike "*$log*") { throw 'FAIL: loop log is not in the state dir' }
+            $vbsText = Get-Content $vbs -Raw
+            $loopPath = "$HOME/.local/state/dotfiles/auto-commit-loop.ps1"
+            if ($vbsText -notlike "*$loopPath*") { throw 'FAIL: VBS does not point at the state-dir loop' }
+          }
+          if (Test-Path "$HOME/.local/share/dotfiles.git/auto-commit.ps1") { throw 'FAIL: commit script inside git dir' }
+          if (Test-Path "$HOME/.local/share/dotfiles/auto-commit.ps1") { throw 'FAIL: commit script inside tool dir' }
+          if (Test-Path "$HOME/.dotfiles") { throw 'FAIL: ~/.dotfiles was created' }
+          if (Test-Path (Join-Path $env:APPDATA 'dotfiles')) { throw 'FAIL: %APPDATA%\dotfiles was created' }
+          foreach ($rel in @('data\dotfiles', 'state\dotfiles', 'cache\dotfiles')) {
+            if (Test-Path (Join-Path $decoy $rel)) { throw "FAIL: decoy contains $rel" }
+          }
           Write-Host "[validate-timer] dotfiles-timer.ps1 install ok"
 
       # ── Smoke test: scheduler registration ──────────────────────────────
@@ -763,7 +1071,7 @@ jobs:
           echo "[validate-timer] assert ProgramArguments -> /bin/bash + .auto-commit.sh"
           grep -q '<string>/bin/bash</string>' "$plist" \
             || { echo "FAIL: ProgramArguments missing /bin/bash"; exit 1; }
-          grep -q "$HOME/.dotfiles/.auto-commit.sh" "$plist" \
+          grep -q "$HOME/.local/state/dotfiles/auto-commit.sh" "$plist" \
             || { echo "FAIL: plist does not point at .auto-commit.sh"; exit 1; }
 
           echo "[validate-timer] assert EnvironmentVariables has PATH (incl. \$HOME/.local/bin) + SSH_AUTH_SOCK"
@@ -774,11 +1082,16 @@ jobs:
           grep -q '<key>SSH_AUTH_SOCK</key>' "$plist" \
             || { echo "FAIL: plist EnvironmentVariables missing SSH_AUTH_SOCK key"; exit 1; }
 
-          echo "[validate-timer] assert StandardOut/ErrorPath under logs dir"
+          echo "[validate-timer] assert StandardOut/ErrorPath under the state dir"
           grep -q '<key>StandardOutPath</key>' "$plist" \
             || { echo "FAIL: plist missing StandardOutPath"; exit 1; }
           grep -q '<key>StandardErrorPath</key>' "$plist" \
             || { echo "FAIL: plist missing StandardErrorPath"; exit 1; }
+          grep -F "$HOME/.local/state/dotfiles/stdout.log" "$plist" \
+            || { echo "FAIL: StandardOutPath is not in the state dir"; exit 1; }
+          grep -F "$HOME/.local/state/dotfiles/stderr.log" "$plist" \
+            || { echo "FAIL: StandardErrorPath is not in the state dir"; exit 1; }
+          test ! -d "$HOME/Library/Logs/dotfiles-git-commit"
           echo "[validate-timer] launchd plist ok"
 
       # ── Validate embedded git add mode (-u default, -A after reinstall) ─────
@@ -787,7 +1100,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "[validate-timer] check .auto-commit.sh uses git add -u"
-          f="$HOME/.dotfiles/.auto-commit.sh"
+          f="$HOME/.local/state/dotfiles/auto-commit.sh"
           test -f "$f"
           line=$(grep -E '^git .* add -[uA]' "$f" | head -n1)
           [ -n "$line" ] || { echo "FAIL: no git add staging line"; exit 1; }
@@ -801,7 +1114,7 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "[validate-timer] check .auto-commit.ps1 uses git add -u"
-          $f = Join-Path $env:USERPROFILE '.dotfiles\.auto-commit.ps1'
+          $f = Join-Path $env:USERPROFILE '.local\state\dotfiles\auto-commit.ps1'
           if (-not (Test-Path $f)) { throw "missing $f" }
           $hits = @(Select-String -Path $f -Pattern '^\s*& git @gitArgs add -(u|A)')
           if ($hits.Count -eq 0) { throw "FAIL: no '& git @gitArgs add -u|-A' line in $f" }
@@ -816,11 +1129,11 @@ jobs:
         if: runner.os == 'Linux' || runner.os == 'macOS'
         run: |
           set -euo pipefail
-          dotfiles() { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" "$@"; }
+          dotfiles() { git --git-dir="$HOME/.local/share/dotfiles.git/" --work-tree="$HOME" "$@"; }
 
           echo "[validate-timer] unit: change .gitignore -> .auto-commit.sh -> expect chore(dotfiles): commit"
           echo "# touched-by-ci" >> "$HOME/.gitignore"
-          bash "$HOME/.dotfiles/.auto-commit.sh"
+          bash "$HOME/.local/state/dotfiles/auto-commit.sh"
           COUNT=$(dotfiles log --oneline | wc -l)
           [ "$COUNT" -ge 2 ] || { echo "FAIL: expected commit, got $COUNT"; exit 1; }
           MSG=$(dotfiles log -1 --pretty=%s)
@@ -832,11 +1145,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          function dotfiles { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" @args }
+          function dotfiles { git --git-dir="$HOME/.local/share/dotfiles.git/" --work-tree="$HOME" @args }
 
           Write-Host "[validate-timer] unit: change .gitignore -> .auto-commit.ps1 -> expect chore(dotfiles): commit"
           "# touched-by-ci" | Add-Content "$env:USERPROFILE\.gitignore"
-          & "$env:USERPROFILE\.dotfiles\.auto-commit.ps1"
+          & "$env:USERPROFILE\.local\state\dotfiles\auto-commit.ps1"
           $count = (dotfiles log --oneline).Count
           if ($count -lt 2) { throw "FAIL: expected commit, got $count" }
           $msg = dotfiles log -1 --pretty=%s
@@ -849,7 +1162,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "[validate-timer] unit: status -> 'Last commit:' line, no fresh-commit WARNING"
-          out=$(bash .dotfiles/dotfiles-timer.sh status 2>&1 || true)
+          out=$(bash .local/share/dotfiles/dotfiles-timer.sh status 2>&1 || true)
           echo "$out"
           echo "$out" | grep -q 'Last commit:' \
             || { echo "FAIL: status missing 'Last commit:'"; exit 1; }
@@ -867,7 +1180,7 @@ jobs:
           # (which merges only the error stream) would never capture the 'Last commit:'
           # line — the assertion would then throw despite status printing it. Merge ALL
           # streams with *>&1 so $out holds exactly what a user sees on the console.
-          $out = & (Join-Path $env:GITHUB_WORKSPACE '.dotfiles/dotfiles-timer.ps1') -Action status *>&1 | Out-String
+          $out = & (Join-Path $env:GITHUB_WORKSPACE '.local/share/dotfiles/dotfiles-timer.ps1') -Action status *>&1 | Out-String
           Write-Host $out
           if ($out -notmatch 'Last commit:') { throw "FAIL: status missing 'Last commit:'" }
           if ($out -match 'WARNING: timer may be stuck') { throw "FAIL: false staleness warning right after a fresh commit" }
@@ -878,11 +1191,11 @@ jobs:
         if: runner.os == 'Linux' || runner.os == 'macOS'
         run: |
           set -euo pipefail
-          dotfiles() { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" "$@"; }
+          dotfiles() { git --git-dir="$HOME/.local/share/dotfiles.git/" --work-tree="$HOME" "$@"; }
 
           echo "[validate-timer] unit: clean tree -> .auto-commit.sh -> HEAD unchanged"
           BEFORE=$(dotfiles log -1 --pretty=%H)
-          bash "$HOME/.dotfiles/.auto-commit.sh"
+          bash "$HOME/.local/state/dotfiles/auto-commit.sh"
           AFTER=$(dotfiles log -1 --pretty=%H)
           [ "$BEFORE" = "$AFTER" ] \
             || { echo "FAIL: unexpected commit when nothing changed"; exit 1; }
@@ -892,11 +1205,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          function dotfiles { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" @args }
+          function dotfiles { git --git-dir="$HOME/.local/share/dotfiles.git/" --work-tree="$HOME" @args }
 
           Write-Host "[validate-timer] unit: clean tree -> .auto-commit.ps1 -> HEAD unchanged"
           $before = dotfiles log -1 --pretty=%H
-          & "$env:USERPROFILE\.dotfiles\.auto-commit.ps1"
+          & "$env:USERPROFILE\.local\state\dotfiles\auto-commit.ps1"
           $after  = dotfiles log -1 --pretty=%H
           if ($before -ne $after) { throw "FAIL: unexpected commit when nothing changed" }
           Write-Host "[validate-timer] PASS: no spurious commit"
@@ -905,7 +1218,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           echo "[validate-timer] dotfiles-timer.sh reinstall --all"
-          bash .dotfiles/dotfiles-timer.sh reinstall '--all'
+          bash .local/share/dotfiles/dotfiles-timer.sh reinstall '--all'
           echo "[validate-timer] reinstall --all ok"
 
       - name: "Reinstall with git add -A (macOS)"
@@ -914,7 +1227,7 @@ jobs:
           echo "[validate-timer] dotfiles-timer.sh reinstall --all"
           # reinstall re-runs launchctl bootstrap which soft-skips when
           # session-less; the regenerated .auto-commit.sh is what we assert next.
-          bash .dotfiles/dotfiles-timer.sh reinstall '--all' || true
+          bash .local/share/dotfiles/dotfiles-timer.sh reinstall '--all' || true
           echo "[validate-timer] reinstall --all ok"
 
       - name: "Reinstall with git add -A (Windows)"
@@ -924,7 +1237,7 @@ jobs:
         # (& must not start the YAML scalar — bare `&` is interpreted as a YAML anchor.)
         run: |
           Write-Host "[validate-timer] dotfiles-timer.ps1 reinstall -AddAll"
-          & (Join-Path $env:GITHUB_WORKSPACE '.dotfiles/dotfiles-timer.ps1') -Action reinstall -AddAll
+          & (Join-Path $env:GITHUB_WORKSPACE '.local/share/dotfiles/dotfiles-timer.ps1') -Action reinstall -AddAll
           Write-Host "[validate-timer] reinstall -AddAll ok"
 
       - name: "Validate .auto-commit embeds git add -A after reinstall --all (Linux/macOS)"
@@ -932,7 +1245,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "[validate-timer] check .auto-commit.sh uses git add -A after reinstall --all"
-          f="$HOME/.dotfiles/.auto-commit.sh"
+          f="$HOME/.local/state/dotfiles/auto-commit.sh"
           line=$(grep -E '^git .* add -[uA]' "$f" | head -n1)
           [ -n "$line" ] || { echo "FAIL: no git add staging line"; exit 1; }
           echo "[validate-timer] Staging line: $line"
@@ -945,7 +1258,7 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "[validate-timer] check .auto-commit.ps1 uses git add -A after reinstall -AddAll"
-          $f = Join-Path $env:USERPROFILE '.dotfiles\.auto-commit.ps1'
+          $f = Join-Path $env:USERPROFILE '.local\state\dotfiles\auto-commit.ps1'
           $hits = @(Select-String -Path $f -Pattern '^\s*& git @gitArgs add -(u|A)')
           if ($hits.Count -eq 0) { throw "FAIL: no '& git @gitArgs add -u|-A' line in $f" }
           $line = $hits[0].Line
@@ -978,7 +1291,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dotfiles() { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" "$@"; }
+          dotfiles() { git --git-dir="$HOME/.local/share/dotfiles.git/" --work-tree="$HOME" "$@"; }
           cd "$HOME"
 
           echo "[validate-timer] advance origin/system via scratch clone"
@@ -986,14 +1299,14 @@ jobs:
           git clone /tmp/dotfiles-remote.git /tmp/df-scratch
           ( cd /tmp/df-scratch
             git checkout system
-            printf 'system improvement\n' > .dotfiles/SYSTEM_NEW.txt
-            git add -f .dotfiles/SYSTEM_NEW.txt
+            printf 'system improvement\n' > .local/share/dotfiles/SYSTEM_NEW.txt
+            git add -f .local/share/dotfiles/SYSTEM_NEW.txt
             git commit -m "feat(system): add SYSTEM_NEW marker"
             git push origin system )
 
           echo "[validate-timer] dotfiles-update (clean) -> expect exit 0 + file present"
-          bash "$HOME/.dotfiles/dotfiles-update.sh"
-          test -f "$HOME/.dotfiles/SYSTEM_NEW.txt" \
+          bash "$HOME/.local/share/dotfiles/dotfiles-update.sh"
+          test -f "$HOME/.local/share/dotfiles/SYSTEM_NEW.txt" \
             || { echo "FAIL: SYSTEM_NEW.txt not merged into work-tree"; exit 1; }
           dotfiles merge-base --is-ancestor origin/system HEAD \
             || { echo "FAIL: origin/system not merged into HEAD"; exit 1; }
@@ -1004,7 +1317,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          function dotfiles { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" @args }
+          function dotfiles { git --git-dir="$HOME/.local/share/dotfiles.git/" --work-tree="$HOME" @args }
           Set-Location $HOME
 
           Write-Host "[validate-timer] advance origin/system via scratch clone"
@@ -1013,16 +1326,16 @@ jobs:
           Push-Location C:\df-scratch
           try {
               git checkout system
-              "system improvement" | Set-Content .dotfiles\SYSTEM_NEW.txt
-              git add -f .dotfiles/SYSTEM_NEW.txt
+              "system improvement" | Set-Content .local/share/dotfiles/SYSTEM_NEW.txt
+              git add -f .local/share/dotfiles/SYSTEM_NEW.txt
               git commit -m "feat(system): add SYSTEM_NEW marker"
               git push origin system
           } finally { Pop-Location }
 
           Write-Host "[validate-timer] dotfiles-update (clean) -> expect exit 0 + file present"
-          pwsh "$HOME\.dotfiles\dotfiles-update.ps1"
+          pwsh "$HOME\.local\share\dotfiles\dotfiles-update.ps1"
           if ($LASTEXITCODE -ne 0) { throw "FAIL: dotfiles-update exited $LASTEXITCODE on clean merge" }
-          if (-not (Test-Path "$HOME\.dotfiles\SYSTEM_NEW.txt")) { throw "FAIL: SYSTEM_NEW.txt not merged" }
+          if (-not (Test-Path "$HOME\.local\share\dotfiles\SYSTEM_NEW.txt")) { throw "FAIL: SYSTEM_NEW.txt not merged" }
           dotfiles merge-base --is-ancestor origin/system HEAD
           if ($LASTEXITCODE -ne 0) { throw "FAIL: origin/system not merged into HEAD" }
           Write-Host "[validate-timer] PASS: clean merge propagated origin/system"
@@ -1036,7 +1349,7 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          dotfiles() { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" "$@"; }
+          dotfiles() { git --git-dir="$HOME/.local/share/dotfiles.git/" --work-tree="$HOME" "$@"; }
           cd "$HOME"
 
           echo "[validate-timer] remote edits CONFLICT.txt one way"
@@ -1044,20 +1357,20 @@ jobs:
           git clone /tmp/dotfiles-remote.git /tmp/df-scratch2
           ( cd /tmp/df-scratch2
             git checkout system
-            printf 'remote-side line\n' > .dotfiles/CONFLICT.txt
-            git add -f .dotfiles/CONFLICT.txt
+            printf 'remote-side line\n' > .local/share/dotfiles/CONFLICT.txt
+            git add -f .local/share/dotfiles/CONFLICT.txt
             git commit -m "feat(system): CONFLICT.txt remote edit"
             git push origin system )
 
           echo "[validate-timer] machine edits CONFLICT.txt the other way"
-          printf 'machine-side line\n' > "$HOME/.dotfiles/CONFLICT.txt"
-          dotfiles add -f .dotfiles/CONFLICT.txt
+          printf 'machine-side line\n' > "$HOME/.local/share/dotfiles/CONFLICT.txt"
+          dotfiles add -f .local/share/dotfiles/CONFLICT.txt
           dotfiles commit -m "local: CONFLICT.txt machine edit"
           HEAD_BEFORE=$(dotfiles rev-parse HEAD)
 
           echo "[validate-timer] dotfiles-update (conflict) -> expect exit 1 + abort"
           set +e
-          OUT=$(bash "$HOME/.dotfiles/dotfiles-update.sh" 2>&1); RC=$?
+          OUT=$(bash "$HOME/.local/share/dotfiles/dotfiles-update.sh" 2>&1); RC=$?
           set -e
           echo "$OUT"
           [ "$RC" -eq 1 ] || { echo "FAIL: expected exit 1, got $RC"; exit 1; }
@@ -1068,7 +1381,7 @@ jobs:
           # merge aborted: HEAD unchanged + no MERGE_HEAD + clean status
           [ "$(dotfiles rev-parse HEAD)" = "$HEAD_BEFORE" ] \
             || { echo "FAIL: HEAD moved despite abort"; exit 1; }
-          test ! -f "$HOME/.dotfiles/MERGE_HEAD" \
+          test ! -f "$HOME/.local/share/dotfiles.git/MERGE_HEAD" \
             || { echo "FAIL: MERGE_HEAD present — merge not aborted"; exit 1; }
           [ -z "$(dotfiles status --porcelain)" ] \
             || { echo "FAIL: work-tree not clean after abort"; dotfiles status --porcelain; exit 1; }
@@ -1079,7 +1392,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          function dotfiles { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" @args }
+          function dotfiles { git --git-dir="$HOME/.local/share/dotfiles.git/" --work-tree="$HOME" @args }
           Set-Location $HOME
 
           Write-Host "[validate-timer] remote edits CONFLICT.txt one way"
@@ -1088,27 +1401,77 @@ jobs:
           Push-Location C:\df-scratch2
           try {
               git checkout system
-              "remote-side line" | Set-Content .dotfiles\CONFLICT.txt
-              git add -f .dotfiles/CONFLICT.txt
+              "remote-side line" | Set-Content .local/share/dotfiles/CONFLICT.txt
+              git add -f .local/share/dotfiles/CONFLICT.txt
               git commit -m "feat(system): CONFLICT.txt remote edit"
               git push origin system
           } finally { Pop-Location }
 
           Write-Host "[validate-timer] machine edits CONFLICT.txt the other way"
-          "machine-side line" | Set-Content "$HOME\.dotfiles\CONFLICT.txt"
-          dotfiles add -f .dotfiles/CONFLICT.txt
+          "machine-side line" | Set-Content "$HOME\.local\share\dotfiles\CONFLICT.txt"
+          dotfiles add -f .local/share/dotfiles/CONFLICT.txt
           dotfiles commit -m "local: CONFLICT.txt machine edit"
           $headBefore = (dotfiles rev-parse HEAD)
 
           Write-Host "[validate-timer] dotfiles-update (conflict) -> expect exit 1 + abort"
-          $out = pwsh "$HOME\.dotfiles\dotfiles-update.ps1" 2>&1 | Out-String
+          $out = pwsh "$HOME\.local\share\dotfiles\dotfiles-update.ps1" 2>&1 | Out-String
           $rc = $LASTEXITCODE
           Write-Host $out
           if ($rc -ne 1) { throw "FAIL: expected exit 1, got $rc" }
           if ($out -notmatch 'DOTFILES UPDATE CONFLICT') { throw "FAIL: missing loud conflict message" }
           if ($out -notmatch 'CONFLICT\.txt') { throw "FAIL: conflicting file not listed" }
           if ((dotfiles rev-parse HEAD) -ne $headBefore) { throw "FAIL: HEAD moved despite abort" }
-          if (Test-Path "$HOME\.dotfiles\MERGE_HEAD") { throw "FAIL: MERGE_HEAD present — merge not aborted" }
+          if (Test-Path "$HOME\.local\share\dotfiles.git\MERGE_HEAD") { throw "FAIL: MERGE_HEAD present — merge not aborted" }
           $status = (dotfiles status --porcelain | Out-String).Trim()
           if ($status) { throw "FAIL: work-tree not clean after abort:`n$status" }
           Write-Host "[validate-timer] PASS: conflict aborted, tree clean, exit 1"
+
+      - name: Uninstall timer (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          bash .local/share/dotfiles/dotfiles-timer.sh uninstall
+          test ! -e "$HOME/.config/systemd/user/dotfiles-git-commit.service"
+          test ! -e "$HOME/.config/systemd/user/dotfiles-git-commit.timer"
+          test ! -e "$HOME/.local/state/dotfiles/auto-commit.sh"
+          test ! -e "$HOME/.local/state/dotfiles/auto-commit.log"
+          test -d "$HOME/.local/share/dotfiles.git"
+          test -f "$HOME/.local/share/dotfiles/dotfiles-timer.sh"
+          bash .local/share/dotfiles/dotfiles-timer.sh uninstall
+          echo "[validate-timer] uninstall ok (Linux)"
+
+      - name: Uninstall timer (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          bash .local/share/dotfiles/dotfiles-timer.sh uninstall
+          test ! -e "$HOME/Library/LaunchAgents/dotfiles-git-commit.plist"
+          test ! -e "$HOME/.local/state/dotfiles/auto-commit.sh"
+          test ! -e "$HOME/.local/state/dotfiles/stdout.log"
+          test ! -e "$HOME/.local/state/dotfiles/stderr.log"
+          test -d "$HOME/.local/share/dotfiles.git"
+          test -f "$HOME/.local/share/dotfiles/dotfiles-timer.sh"
+          bash .local/share/dotfiles/dotfiles-timer.sh uninstall
+          echo "[validate-timer] uninstall ok (macOS)"
+
+      - name: Uninstall timer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & pwsh .local/share/dotfiles/dotfiles-timer.ps1 uninstall
+          if ($LASTEXITCODE -ne 0) { throw "uninstall exited $LASTEXITCODE" }
+          $state = Join-Path $HOME '.local/state/dotfiles'
+          foreach ($name in @('auto-commit.ps1', 'auto-commit-loop.ps1', 'auto-commit.log')) {
+            if (Test-Path (Join-Path $state $name)) { throw "FAIL: $name still present" }
+          }
+          $vbs = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\DotfilesAutoCommit.vbs'
+          if (Test-Path $vbs) { throw 'FAIL: Startup VBS still present' }
+          $task = Get-ScheduledTask -TaskName 'dotfiles-git-commit' -ErrorAction SilentlyContinue
+          if ($task) { throw 'FAIL: scheduled task still present' }
+          if (-not (Test-Path (Join-Path $HOME '.local/share/dotfiles.git'))) { throw 'FAIL: git dir removed' }
+          if (-not (Test-Path (Join-Path $HOME '.local/share/dotfiles/dotfiles-timer.ps1'))) { throw 'FAIL: tool dir removed' }
+          & pwsh .local/share/dotfiles/dotfiles-timer.ps1 uninstall
+          if ($LASTEXITCODE -ne 0) { throw "second uninstall exited $LASTEXITCODE" }
+          Write-Host "[validate-timer] uninstall ok (Windows)"
+          exit 0
