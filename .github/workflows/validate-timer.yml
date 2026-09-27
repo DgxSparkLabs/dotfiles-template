@@ -369,7 +369,7 @@ jobs:
           fi
           NOW=$(git --git-dir="$MAIN_GIT" rev-parse HEAD)
           [ "$NOW" = "$MAIN_HEAD" ] || { echo "FAIL: bootstrap smoke moved the main git dir HEAD"; exit 1; }
-          git --git-dir="$MAIN_GIT" --work-tree="$HOME" checkout -- .
+          git -C "$HOME" --git-dir="$MAIN_GIT" --work-tree="$HOME" checkout -- .
           echo "[validate-timer] bootstrap smoke test ok"
 
       - name: Bootstrap smoke test (Windows)
@@ -494,7 +494,7 @@ jobs:
           Write-Host "[validate-timer] bootstrap smoke test ok (Windows)"
           $now = (git --git-dir="$mainGit" rev-parse HEAD).Trim()
           if ($now -ne $mainHead) { throw 'FAIL: bootstrap smoke moved the main git dir HEAD' }
-          git --git-dir="$mainGit" --work-tree="$HOME" checkout -- .
+          git -C $HOME --git-dir="$mainGit" --work-tree="$HOME" checkout -- .
           if ($LASTEXITCODE -ne 0) { throw 'FAIL: could not restore the work tree' }
           # In the non-valid-ref else-branch the last native command is the
           # bootstrap whose clone intentionally fails on the space-y ref (exit
