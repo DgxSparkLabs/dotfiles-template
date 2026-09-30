@@ -10,6 +10,22 @@ TOOL="$GITHUB_WORKSPACE/.local/share/dotfiles"
 
 banner() { printf '\n--- %s ---\n' "$1"; }
 
+# Hold a narrative line long enough to read in the movie.
+hold() { sleep "${PROOF_HOLD:-0.6}"; }
+
+# Replay a command one line at a time. A dump that finishes in one frame
+# is not a movie of someone using the system.
+show() {
+  local log line
+  log="$(mktemp)"
+  "$@" >"$log" 2>&1
+  while IFS= read -r line || [ -n "${line:-}" ]; do
+    printf '%s\n' "$line"
+    sleep 0.35
+  done <"$log"
+  rm -f "$log"
+}
+
 gitdir() {
   git --git-dir="$HOME/.local/share/dotfiles.git" --work-tree="$HOME" "$@"
 }
@@ -123,76 +139,110 @@ step_uninstall() {
 
 story_new_machine() {
   banner "Set up this laptop"
+  hold
   echo "Machine branch: ci-machine"
+  hold
   echo "Shared baseline: system"
+  hold
   echo "GitHub's default branch is left alone."
-  bash "$TOOL/bootstrap.sh" --repo "$REMOTE" --branch ci-machine --system-ref system
+  hold
+  show bash "$TOOL/bootstrap.sh" --repo "$REMOTE" --branch ci-machine --system-ref system
   echo "You are on $(gitdir symbolic-ref --short HEAD). Updates merge $(gitdir config --get dotfiles.systemRef)."
+  hold
 }
 
 story_track_bashrc() {
   cd "$HOME"
   banner "Track your bashrc"
+  hold
   printf 'alias ll="ls -la"\n' > .bashrc
   echo "A new file in your home is ignored until you add it with -f."
-  gitdir add -f .bashrc
-  gitdir commit -m "Add bashrc"
+  hold
+  show gitdir add -f .bashrc
+  show gitdir commit -m "Add bashrc"
   echo "Branch: $(gitdir symbolic-ref --short HEAD)"
-  gitdir log -1 --oneline
+  hold
+  show gitdir log -1 --oneline
   echo "status:"
-  gitdir status --short
+  show gitdir status --short
   echo "Bashrc is tracked on ci-machine."
+  hold
 }
 
 story_edit_tomorrow() {
   cd "$HOME"
   banner "The next day you change bashrc"
+  hold
   printf '\n# prefer vim\nexport EDITOR=vim\n' >> .bashrc
+  echo "status:"
+  hold
   local status
   status="$(gitdir status --short)"
   printf '%s\n' "$status"
   printf '%s\n' "$status" | grep -F .bashrc >/dev/null
-  gitdir add -u .
-  gitdir commit -m "Set EDITOR"
+  hold
+  show gitdir add -u .
+  show gitdir commit -m "Set EDITOR"
   echo "status after commit:"
-  gitdir status --short
+  show gitdir status --short
   echo "Branch is still $(gitdir symbolic-ref --short HEAD)"
+  hold
   echo "The edit is committed, and you are still on ci-machine."
+  hold
 }
 
 story_doctor() {
   cd "$HOME"
   banner "Check this laptop"
-  bash "$TOOL/dotfiles-doctor.sh" --skip-network
+  hold
+  show bash "$TOOL/dotfiles-doctor.sh" --skip-network
+  hold
 }
 
 story_inherit() {
   cd "$HOME"
   banner "A shared improvement landed on system"
+  hold
   echo "This laptop merges system. It does not merge GitHub's default branch."
-  bash "$TOOL/dotfiles-update.sh"
+  hold
+  show bash "$TOOL/dotfiles-update.sh"
   echo "Shared file:"
+  hold
   cat "$HOME/.local/share/dotfiles/SYSTEM_ONLY.txt"
+  hold
   if [ -e "$HOME/DEFAULT_ONLY.txt" ]; then
     echo "FAIL: default-branch file arrived"
     exit 1
   fi
   echo "Default-branch-only file: not on this machine"
+  hold
   echo "Branch is still $(gitdir symbolic-ref --short HEAD)"
+  hold
   echo "Shared file arrived. Default-branch file did not. Still on ci-machine."
+  hold
 }
 
 story_walk_away() {
   cd "$HOME"
   banner "You change bashrc and walk away"
+  hold
+  echo "Publishing ci-machine once, so the timer has an upstream."
+  hold
+  show gitdir push -u origin HEAD
   printf '\n# left the desk\n' >> .bashrc
   echo "The timer script commits tracked changes and pushes."
-  bash "$TOOL/dotfiles-timer.sh" install
-  bash "$HOME/.local/state/dotfiles/auto-commit.sh"
-  gitdir log -1 --format=%s | grep -F .bashrc
+  hold
+  show bash "$TOOL/dotfiles-timer.sh" install
+  show bash "$HOME/.local/state/dotfiles/auto-commit.sh"
+  gitdir log -1 --format=%s | grep -F .bashrc >/dev/null
   echo "Latest commit:"
-  gitdir log -1 --format=%s
-  echo "The timer committed the bashrc edit on $(gitdir symbolic-ref --short HEAD)."
+  show gitdir log -1 --format=%s
+  if [ "$(gitdir rev-parse HEAD)" != "$(gitdir rev-parse '@{u}')" ]; then
+    echo "FAIL: timer commit was not pushed"
+    exit 1
+  fi
+  echo "The timer committed the bashrc edit and pushed ci-machine."
+  hold
 }
 
 record_movie() {
@@ -204,10 +254,10 @@ record_movie() {
   local movie="$USAGE_OUT/$name.svg"
   local png="$PROOF_OUT/$name.png"
 
-  # -v writes an animated SVG (the movie). --save-cast keeps the tape.
+  # -v writes an animated SVG. --sleep holds the last screen before the
+  # movie repeats. --save-cast keeps the tape.
   console2svg capture \
     -v \
-    --no-loop \
     --sleep 2 \
     --fps 8 \
     --mask-auto false \
@@ -224,6 +274,13 @@ record_movie() {
     echo "visual-proof: tape $name.cast does not contain: $expect" >&2
     exit 1
   fi
+  # A readable movie lasts longer than a single dumped frame.
+  local last
+  last="$(tail -n 1 "$cast" | sed -n 's/^\[\([0-9.][0-9.]*\),.*/\1/p')"
+  awk -v t="$last" 'BEGIN { if (t+0 < 2) exit 1 }' || {
+    echo "visual-proof: tape $name.cast is shorter than 2s (last=$last)" >&2
+    exit 1
+  }
   console2svg capture \
     --in "$cast" \
     --mask-auto false \
@@ -293,7 +350,7 @@ Each step is one recording.
 03-hooks           still: hooks path and cache venv
 04-doctor          animated: doctor, all hard checks passed
 05-inherit-system  animated: dotfiles update merges system and skips the default branch
-06-walk-away       animated: timer script commits and pushes the bashrc edit
+06-walk-away       animated: publish once, then the timer commits and pushes the bashrc edit
 07-timer-where     still: ExecStart is the state-dir script
 08-uninstall       still: timer files gone; git dir and program kept
 
@@ -314,7 +371,7 @@ all() {
   record 03-hooks 'PROOF hooks ok'
   record_movie 04-doctor 'all hard checks PASSED' 42 "Check this laptop"
   record_movie 05-inherit-system 'Shared file arrived. Default-branch file did not. Still on ci-machine.' 32 "Inherit the shared baseline"
-  record_movie 06-walk-away 'The timer committed the bashrc edit on ci-machine.' 36 "Walk away; the timer commits"
+  record_movie 06-walk-away 'The timer committed the bashrc edit and pushed ci-machine.' 40 "Walk away; the timer commits"
   record 07-timer-where 'PROOF timer-where ok'
   record 08-uninstall 'PROOF uninstall ok'
   write_index

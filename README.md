@@ -160,7 +160,7 @@ The first add of a path uses `-f`. Later edits of that tracked file do not.
 
 ## Watch a laptop use it
 
-These are animated SVGs from a real run of the scripts ([console2svg](https://github.com/arika0093/console2svg) `-v`, with an asciicast tape saved beside the proof artifact). GitHub's README often shows the opening frame. Open the SVG file to play the movie.
+These are animated SVGs from a real run of the scripts ([console2svg](https://github.com/arika0093/console2svg) `-v`, with an asciicast tape saved beside the proof artifact). Each movie plays the session, holds the last screen, then repeats. GitHub's README often shows only the opening frame, so open the SVG file to watch it.
 
 **Set up the laptop.** The machine branch is `ci-machine`. Shared defaults stay on `system`. GitHub's default branch is left as `main`.
 
@@ -182,7 +182,7 @@ These are animated SVGs from a real run of the scripts ([console2svg](https://gi
 
 ![Inherit the shared baseline](docs/usage/05-inherit-system.svg)
 
-**Walk away.** After the timer is installed, its script commits the `.bashrc` edit and pushes it.
+**Walk away.** The branch is published once, so the timer has an upstream. Its script then commits the `.bashrc` edit and pushes it.
 
 ![Walk away; the timer commits](docs/usage/06-walk-away.svg)
 
@@ -191,7 +191,7 @@ For changes you want every machine to inherit, see [Multiple machines](#multiple
 ### Auto-commit (optional)
 
 Automatically stage and push changes on a schedule. By default the generated script runs **`git add -u`** (tracked paths only). **`dotfiles-timer install --all`** (Linux: `--all`/`-A`; Windows: `-AddAll`) embeds **`git add -A`** instead, which also picks up **new untracked** paths under `$HOME`.
-For the default `-u` behavior, new dotfiles must still be staged once with `dotfiles add`.
+For the default `-u` behavior, new dotfiles must still be staged once with `dotfiles add -f`.
 
 Add a `dotfiles-timer` wrapper to your shell profile (same pattern as the `dotfiles` function above) so the install/uninstall/status commands are identical across all your machines:
 
