@@ -73,13 +73,19 @@ gitdir() {
   git --git-dir="$HOME/.local/share/dotfiles.git" --work-tree="$HOME" "$@"
 }
 
+# The command a reader types. Same git dir as gitdir, so the prompt can say
+# `dotfiles` and the recording still drives the bare repo.
+dotfiles() {
+  git --git-dir="$HOME/.local/share/dotfiles.git" --work-tree="$HOME" "$@"
+}
+
 old_directory() { printf '%s%s' "$HOME/" '.' 'dotfiles'; }
 
 prepare_remote() {
   git init --bare "$REMOTE"
   git -C "$GITHUB_WORKSPACE" push "$REMOTE" "HEAD:refs/heads/main"
   git -C "$GITHUB_WORKSPACE" push "$REMOTE" "HEAD:refs/heads/system"
-  git -C "$GITHUB_WORKSPACE" push "$REMOTE" "HEAD:refs/heads/ci-machine"
+  git -C "$GITHUB_WORKSPACE" push "$REMOTE" "HEAD:refs/heads/laptop"
 
   local seed
   seed="$(mktemp -d)"
@@ -175,41 +181,35 @@ step_uninstall() {
 
 story_new_machine() {
   cd "$HOME"
-  run "bash bootstrap.sh --repo $REMOTE --branch ci-machine --system-ref system" \
-    bash "$TOOL/bootstrap.sh" --repo "$REMOTE" --branch ci-machine --system-ref system
   run "ls -F ~/.local/share" ls -F "$HOME/.local/share"
   run "ls -F ~/.local/share/dotfiles.git" ls -F "$HOME/.local/share/dotfiles.git"
-  run "ls -F ~/.local/share/dotfiles/*.sh" ls -F "$HOME/.local/share/dotfiles/"*.sh
-  run "git status -sb" gitdir status -sb
-  run "git symbolic-ref HEAD" gitdir symbolic-ref HEAD
-  run "git config --get dotfiles.systemRef" gitdir config --get dotfiles.systemRef
-  run "git --git-dir=$REMOTE symbolic-ref HEAD" \
-    git --git-dir="$REMOTE" symbolic-ref HEAD
+  run "ls -F ~/.local/share/dotfiles" ls -F "$HOME/.local/share/dotfiles"
+  run "dotfiles status -sb" dotfiles status -sb
 }
 
 story_track_bashrc() {
   cd "$HOME"
   printf 'alias ll="ls -la"\n' > .bashrc
-  run "ls -l .bashrc" ls -l .bashrc
-  run "cat .bashrc" cat .bashrc
-  run "git check-ignore -v .bashrc" gitdir check-ignore -v .bashrc
-  run_fail "git add .bashrc" gitdir add .bashrc
-  run "git add -f .bashrc" gitdir add -f .bashrc
-  run "git commit -m 'Add bashrc'" gitdir commit -m "Add bashrc"
-  run "git ls-files .bashrc" gitdir ls-files .bashrc
-  run "git status -sb" gitdir status -sb
+  run "ls -l ~/.bashrc" ls -l "$HOME/.bashrc"
+  run "cat ~/.bashrc" cat "$HOME/.bashrc"
+  run "dotfiles check-ignore -v ~/.bashrc" dotfiles check-ignore -v "$HOME/.bashrc"
+  run_fail "dotfiles add ~/.bashrc" dotfiles add "$HOME/.bashrc"
+  run "dotfiles add -f ~/.bashrc" dotfiles add -f "$HOME/.bashrc"
+  run "dotfiles commit -m \"Add bashrc\"" dotfiles commit -m "Add bashrc"
+  run "dotfiles push -u origin HEAD" dotfiles push -u origin HEAD
+  run "dotfiles status -sb" dotfiles status -sb
 }
 
 story_edit_tomorrow() {
   cd "$HOME"
   printf '\n# prefer vim\nexport EDITOR=vim\n' >> .bashrc
-  run "cat .bashrc" cat .bashrc
-  run_diff "git diff -- .bashrc" gitdir diff -- .bashrc
-  grep -F 'export EDITOR=vim' < <(gitdir diff -- .bashrc || true) >/dev/null
-  run "git add -u ." gitdir add -u .
-  run "git commit -m 'Set EDITOR'" gitdir commit -m "Set EDITOR"
-  run "git show -1 --stat -- .bashrc" gitdir show -1 --stat -- .bashrc
-  run "git status -sb" gitdir status -sb
+  run "cat ~/.bashrc" cat "$HOME/.bashrc"
+  run_diff "dotfiles diff ~/.bashrc" dotfiles diff -- "$HOME/.bashrc"
+  grep -F 'export EDITOR=vim' < <(dotfiles diff -- "$HOME/.bashrc" || true) >/dev/null
+  run "dotfiles add -u ." dotfiles add -u .
+  run "dotfiles commit -m \"Set EDITOR\"" dotfiles commit -m "Set EDITOR"
+  run "dotfiles log -1 --stat" dotfiles log -1 --stat
+  run "dotfiles status -sb" dotfiles status -sb
 }
 
 story_doctor() {
@@ -222,33 +222,30 @@ story_doctor() {
 
 story_inherit() {
   cd "$HOME"
-  run "git --git-dir=$REMOTE show refs/heads/system:.local/share/dotfiles/SYSTEM_ONLY.txt" \
-    git --git-dir="$REMOTE" show refs/heads/system:.local/share/dotfiles/SYSTEM_ONLY.txt
-  run "git --git-dir=$REMOTE show refs/heads/main:DEFAULT_ONLY.txt" \
-    git --git-dir="$REMOTE" show refs/heads/main:DEFAULT_ONLY.txt
   run "dotfiles-update" bash "$TOOL/dotfiles-update.sh"
-  run "ls -l .local/share/dotfiles/SYSTEM_ONLY.txt" \
+  run "ls -l ~/.local/share/dotfiles/SYSTEM_ONLY.txt" \
     ls -l "$HOME/.local/share/dotfiles/SYSTEM_ONLY.txt"
-  run "cat .local/share/dotfiles/SYSTEM_ONLY.txt" \
+  run "cat ~/.local/share/dotfiles/SYSTEM_ONLY.txt" \
     cat "$HOME/.local/share/dotfiles/SYSTEM_ONLY.txt"
-  run_fail "ls -l DEFAULT_ONLY.txt" ls -l "$HOME/DEFAULT_ONLY.txt"
-  run "git status -sb" gitdir status -sb
-  run "git log -1 --stat" gitdir log -1 --stat
+  run "dotfiles log -1 --stat" dotfiles log -1 --stat
+  run "dotfiles status -sb" dotfiles status -sb
+  if [ -e "$HOME/DEFAULT_ONLY.txt" ]; then
+    echo "FAIL: file from the host default branch is in the home directory"
+    exit 1
+  fi
 }
 
 story_walk_away() {
   cd "$HOME"
   local before after log head remote_head
-  run "git push -u origin HEAD" gitdir push -u origin HEAD
-  run "dotfiles-timer install" bash "$TOOL/dotfiles-timer.sh" install
-  # enable --now can run the unit immediately. Stop it so this recording shows
-  # the script's own commit and push.
-  systemctl --user stop dotfiles-git-commit.timer
-  systemctl --user stop dotfiles-git-commit.service || true
+  printf '$ %s\n' "printf '\\n# left the desk\\n' >> ~/.bashrc"
   printf '\n# left the desk\n' >> .bashrc
-  run_diff "git diff -- .bashrc" gitdir diff -- .bashrc
-  grep -F '# left the desk' < <(gitdir diff -- .bashrc || true) >/dev/null
-  before="$(git --git-dir="$REMOTE" rev-parse refs/heads/ci-machine)"
+  sleep 0.5
+  run_diff "dotfiles diff ~/.bashrc" dotfiles diff -- "$HOME/.bashrc"
+  grep -F '# left the desk' < <(dotfiles diff -- "$HOME/.bashrc" || true) >/dev/null
+  run "ls -l ~/.local/state/dotfiles/auto-commit.sh" \
+    ls -l "$HOME/.local/state/dotfiles/auto-commit.sh"
+  before="$(git --git-dir="$REMOTE" rev-parse refs/heads/laptop)"
   printf '$ bash ~/.local/state/dotfiles/auto-commit.sh\n'
   log="$(mktemp)"
   bash "$HOME/.local/state/dotfiles/auto-commit.sh" >"$log" 2>&1
@@ -259,39 +256,33 @@ story_walk_away() {
   grep -F '.bashrc' "$log" >/dev/null
   show_log "$log"
   rm -f "$log"
-  after="$(git --git-dir="$REMOTE" rev-parse refs/heads/ci-machine)"
+  after="$(git --git-dir="$REMOTE" rev-parse refs/heads/laptop)"
   if [ "$before" = "$after" ]; then
     echo "FAIL: timer commit was not pushed"
     exit 1
   fi
-  printf '$ git rev-parse HEAD\n'
-  head="$(gitdir rev-parse HEAD)"
-  printf '%s\n' "$head"
-  sleep 0.5
-  printf '$ git --git-dir=%s rev-parse refs/heads/ci-machine\n' "$REMOTE"
-  remote_head="$(git --git-dir="$REMOTE" rev-parse refs/heads/ci-machine)"
-  printf '%s\n' "$remote_head"
-  sleep 0.5
+  head="$(dotfiles rev-parse HEAD)"
+  remote_head="$(git --git-dir="$REMOTE" rev-parse refs/heads/laptop)"
   if [ "$head" != "$remote_head" ]; then
     echo "FAIL: timer commit was not pushed"
     exit 1
   fi
-  run "cat .bashrc" cat .bashrc
-  run "git log -1 --stat" gitdir log -1 --stat
-  run "git status -sb" gitdir status -sb
+  run "cat ~/.bashrc" cat "$HOME/.bashrc"
+  run "dotfiles log -1 --stat" dotfiles log -1 --stat
+  run "dotfiles status -sb" dotfiles status -sb
 }
 
 record_movie() {
   local name="$1"
   local expect="$2"
   local height="$3"
-  local header="$4"
   local cast="$PROOF_OUT/$name.cast"
   local movie="$USAGE_OUT/$name.svg"
   local png="$PROOF_OUT/$name.png"
 
   # -v writes an animated SVG. --sleep holds the last screen before the
-  # movie repeats. --save-cast keeps the tape.
+  # movie repeats. --save-cast keeps the tape. No --header: that flag is
+  # painted as a fake "$ title" line and becomes the frame the README shows.
   console2svg capture \
     -v \
     --sleep 2 \
@@ -301,7 +292,6 @@ record_movie() {
     -h "$height" \
     -d windows \
     -c \
-    --header "$header" \
     --timing realtime \
     --save-cast "$cast" \
     -o "$movie" \
@@ -381,14 +371,14 @@ Each step is one recording.
 
 Read the command, then the lines under it. A sentence we printed is not the proof.
 
-01-new-machine    ls of ~/.local/share (dotfiles and dotfiles.git), ls of the git database, ls of the scripts, then the branch refs
+01-new-machine    ls of ~/.local/share, ls of the git database, ls of the program, dotfiles status -sb
 02-layout          ls of the git database HEAD, ls failing in the program directory, ls failing for the legacy path, diff --cached exit 0, check-ignore of the git database
-02-track-bashrc    ls and cat of .bashrc, check-ignore, add rejected, then ls-files shows it tracked
-03-edit-tomorrow   cat of .bashrc and the diff hunk, then show --stat of that file
+02-track-bashrc    ls and cat of ~/.bashrc, dotfiles check-ignore, dotfiles add rejected, dotfiles add -f, commit, push
+03-edit-tomorrow   cat of ~/.bashrc, dotfiles diff, add -u, commit, log --stat
 03-hooks           git config core.hooksPath, ls of the cache pyvenv.cfg, ls failing for a program .venv
-04-doctor          ls of the hooks directory and the cache pyvenv.cfg, then one PASS line per hard check
-05-inherit-system  ls and cat of the file that arrived, ls failing for the default-branch-only file
-06-walk-away       diff hunk, the script's commit, cat of .bashrc, log --stat, matching rev-parse hashes
+04-doctor          ls of the hooks directory and the cache pyvenv.cfg, then dotfiles-doctor
+05-inherit-system  dotfiles-update, then ls and cat of the file that arrived
+06-walk-away       printf into ~/.bashrc, dotfiles diff, the timer script's commit, cat, log --stat
 07-timer-where     ls of the state-dir script, grep ExecStart, ls failing inside the git dir and the program dir
 08-uninstall       ls failing for the unit and the state script, ls succeeding for the git database and the program
 
@@ -398,18 +388,25 @@ EOF
 
 all() {
   mkdir -p "$PROOF_OUT" "$USAGE_OUT"
-  git config --global user.email "ci@github-actions"
-  git config --global user.name "CI"
+  git config --global user.email "laptop@localhost"
+  git config --global user.name "laptop"
   git config --global --add safe.directory '*'
   prepare_remote
-  record_movie 01-new-machine 'refs/heads/main' 44 "Set up this laptop"
+  # Setup is off-camera. The movie starts at the commands in the README.
+  bash "$TOOL/bootstrap.sh" --repo "$REMOTE" --branch laptop --system-ref system
+  record_movie 01-new-machine '## laptop' 42
   record 02-layout 'PROOF layout ok'
-  record_movie 02-track-bashrc 'The following paths are ignored' 44 "Track your bashrc"
-  record_movie 03-edit-tomorrow 'export EDITOR=vim' 40 "Edit bashrc the next day"
+  record_movie 02-track-bashrc 'The following paths are ignored' 44
+  record_movie 03-edit-tomorrow 'export EDITOR=vim' 40
   record 03-hooks 'PROOF hooks ok'
-  record_movie 04-doctor 'all hard checks PASSED' 48 "Check this laptop"
-  record_movie 05-inherit-system 'No such file' 52 "Inherit the shared baseline"
-  record_movie 06-walk-away '# left the desk' 64 "Walk away; the timer commits"
+  record_movie 04-doctor 'all hard checks PASSED' 36
+  record_movie 05-inherit-system 'only on the named baseline' 40
+  # install enables the timer immediately. Stop it so the movie's script
+  # is the commit on screen, then the later stills still see the unit files.
+  bash "$TOOL/dotfiles-timer.sh" install
+  systemctl --user stop dotfiles-git-commit.timer
+  systemctl --user stop dotfiles-git-commit.service || true
+  record_movie 06-walk-away '# left the desk' 48
   record 07-timer-where 'PROOF timer-where ok'
   record 08-uninstall 'PROOF uninstall ok'
   write_index

@@ -147,48 +147,84 @@ For the ongoing per-machine workflow, see [Multiple machines](#multiple-machines
 
 ## Daily use
 
-You stay on `<machine-name>`. Shared defaults stay on the baseline branch from step 1 (`system`, unless you set `dotfiles.systemRef` to another name). GitHub can keep `main` as its default. `dotfiles update` merges the baseline you named, not that default.
+You stay on your machine branch. Shared defaults stay on the baseline branch from step 1 (`system`, unless you set `dotfiles.systemRef` to another name). GitHub can keep `main` as its default. [`dotfiles-update`](#system-updates-dotfiles-update) merges the baseline you named.
 
-**After setup**, `~/.local/share` has two directories. `dotfiles/` is the scripts. `dotfiles.git/` is the git database (`HEAD`, `objects`, `refs`). `status -sb` names this machine's branch, and the remote HEAD is still `main`.
+The pictures are a laptop whose branch is `laptop`. Each picture is the command block above it, in that order. Run them from any directory; `dotfiles` always uses `$HOME` as the work tree.
 
-![Setup leaves two directories, and the remote default stays main](.local/share/dotfiles/docs/usage/01-new-machine.svg)
-
-**Track a file once.** `ls` and `cat` show `~/.bashrc`. The root ignore hides it, so `add` without `-f` is rejected. After `add -f`, `ls-files` lists the file and you are still on `<machine-name>`. Publish once so later pushes have an upstream:
+**Two directories.** `ls` lists `dotfiles/` (the scripts) and `dotfiles.git/` (the git database: `HEAD`, `objects`, `refs`). `dotfiles status -sb` prints this machine's branch.
 
 ```bash
-dotfiles add -f ~/.bashrc
-dotfiles commit -m "Add bashrc"
-dotfiles push -u origin <machine-name>
-```
-
-![bashrc is listed, then tracked](.local/share/dotfiles/docs/usage/02-track-bashrc.svg)
-
-**Edit that file later.** `cat` shows the new lines and the diff is the change. `show --stat` names `.bashrc`. `status -sb` is still your machine branch.
-
-```bash
-dotfiles diff ~/.bashrc
-dotfiles add -u .
-dotfiles commit -m "Set EDITOR"
+ls -F ~/.local/share
+ls -F ~/.local/share/dotfiles.git
+ls -F ~/.local/share/dotfiles
 dotfiles status -sb
 ```
 
-![The bashrc diff, then the commit](.local/share/dotfiles/docs/usage/03-edit-tomorrow.svg)
+![ls of the two directories, then dotfiles status -sb](.local/share/dotfiles/docs/usage/01-new-machine.svg)
 
-**Check the laptop.** The hooks directory and the cache virtualenv are on disk, and the doctor prints a PASS for each hard check.
-
-![Doctor, after the hooks directory and the cache file](.local/share/dotfiles/docs/usage/04-doctor.svg)
-
-**Take a shared change.** `dotfiles update` merges the baseline. `ls` and `cat` show the file that arrived. `ls` of the file that exists only on the default branch fails. You are still on `<machine-name>`. What belongs on each branch is the [partition contract](#the-partition-contract-system-vs-user).
+**Track `~/.bashrc`.** `ls` and `cat` show the file. `dotfiles add` is rejected because the root ignore hides it. `dotfiles add -f` tracks it, the commit records it, and the push sets the upstream.
 
 ```bash
-dotfiles update
+ls -l ~/.bashrc
+cat ~/.bashrc
+dotfiles check-ignore -v ~/.bashrc
+dotfiles add ~/.bashrc
+dotfiles add -f ~/.bashrc
+dotfiles commit -m "Add bashrc"
+dotfiles push -u origin HEAD
+dotfiles status -sb
 ```
 
-![The shared file is on disk; the default-branch file is not](.local/share/dotfiles/docs/usage/05-inherit-system.svg)
+![ls and cat of bashrc, then dotfiles add -f](.local/share/dotfiles/docs/usage/02-track-bashrc.svg)
 
-**Leave the desk.** The diff is the line you added. The [timer](#auto-commit-optional) script commits it and pushes. `cat` still shows that line, and `log --stat` names `.bashrc`. A new file still needs one `add -f` before that script can see it.
+**Save an edit.** `cat` shows the `EDITOR` line. `dotfiles diff` is that change. `dotfiles log -1 --stat` names `.bashrc`, and `dotfiles status -sb` is still `laptop`.
 
-![The timer commits the bashrc line and pushes it](.local/share/dotfiles/docs/usage/06-walk-away.svg)
+```bash
+cat ~/.bashrc
+dotfiles diff ~/.bashrc
+dotfiles add -u .
+dotfiles commit -m "Set EDITOR"
+dotfiles log -1 --stat
+dotfiles status -sb
+```
+
+![cat of bashrc, then dotfiles diff and the commit](.local/share/dotfiles/docs/usage/03-edit-tomorrow.svg)
+
+**Check the laptop.** The hooks directory and the cache virtualenv are on disk. [`dotfiles-doctor --skip-network`](#health-check-dotfiles-doctor-optional) prints a PASS for each hard check.
+
+```bash
+ls -d ~/.local/share/dotfiles/.githooks
+ls -l ~/.cache/dotfiles/githooks-runner/pyvenv.cfg
+dotfiles-doctor --skip-network
+```
+
+![ls of the hooks directory, then dotfiles-doctor](.local/share/dotfiles/docs/usage/04-doctor.svg)
+
+**Take the baseline.** `dotfiles-update` merges branch `system`. `ls` and `cat` show `SYSTEM_ONLY.txt`, the file that merge wrote. `dotfiles status -sb` is still `laptop`. What belongs on each branch is the [partition contract](#the-partition-contract-system-vs-user).
+
+```bash
+dotfiles-update
+ls -l ~/.local/share/dotfiles/SYSTEM_ONLY.txt
+cat ~/.local/share/dotfiles/SYSTEM_ONLY.txt
+dotfiles log -1 --stat
+dotfiles status -sb
+```
+
+![dotfiles-update, then ls and cat of the file it wrote](.local/share/dotfiles/docs/usage/05-inherit-system.svg)
+
+**Leave the desk.** The [timer](#auto-commit-optional) is installed. `printf` appends a line, `dotfiles diff` is that line, and `~/.local/state/dotfiles/auto-commit.sh` (the script the timer runs) commits it and pushes. `cat` still shows the line. A new file still needs one `dotfiles add -f` before that script can see it.
+
+```bash
+printf '\n# left the desk\n' >> ~/.bashrc
+dotfiles diff ~/.bashrc
+ls -l ~/.local/state/dotfiles/auto-commit.sh
+bash ~/.local/state/dotfiles/auto-commit.sh
+cat ~/.bashrc
+dotfiles log -1 --stat
+dotfiles status -sb
+```
+
+![printf, dotfiles diff, then the timer script's commit](.local/share/dotfiles/docs/usage/06-walk-away.svg)
 
 ### Auto-commit (optional)
 
@@ -410,14 +446,14 @@ dotfiles add ~/bin
 
 ## Multiple machines
 
-Use **one branch per machine**. The baseline branch holds template-level defaults. Its name is `dotfiles.systemRef` (default `system`; any valid branch name, including `main` or `master`). Each machine branch is created off that baseline once (step 3). After that, `dotfiles update` pulls baseline improvements down onto the machine branch.
+Use **one branch per machine**. The baseline branch holds template-level defaults. Its name is `dotfiles.systemRef` (default `system`; any valid branch name, including `main` or `master`). Each machine branch is created off that baseline once (step 3). After that, `dotfiles-update` pulls baseline improvements down onto the machine branch.
 
 ```bash
 # Pull baseline improvements onto this machine
-dotfiles update
+dotfiles-update
 ```
 
-`dotfiles update` merges `origin/<dotfiles.systemRef>` onto your current branch. It follows that config, which defaults to `system`. It does not follow `origin/HEAD`. Confirm the work-tree is clean first (`dotfiles status`, or [`dotfiles doctor`](#health-check-dotfiles-doctor-optional)) — the same precaution called out in [step 3](#3-create-this-machines-branch).
+`dotfiles-update` merges `origin/<dotfiles.systemRef>` onto your current branch. It follows that config, which defaults to `system`. It does not follow `origin/HEAD`. Confirm the work-tree is clean first (`dotfiles status`, or [`dotfiles doctor`](#health-check-dotfiles-doctor-optional)) — the same precaution called out in [step 3](#3-create-this-machines-branch).
 
 If this instance already keeps the baseline on `master`:
 
