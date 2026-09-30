@@ -281,8 +281,9 @@ record_movie() {
   local png="$PROOF_OUT/$name.png"
 
   # -v writes an animated SVG. --sleep holds the last screen before the
-  # movie repeats. --save-cast keeps the tape. No --header: that flag is
-  # painted as a fake "$ title" line and becomes the frame the README shows.
+  # movie repeats. --save-cast keeps the tape. No -c and no --header:
+  # those paint a permanent first line (the capture command, or a title)
+  # above the transcript the README shows.
   console2svg capture \
     -v \
     --sleep 2 \
@@ -291,7 +292,6 @@ record_movie() {
     -w 110 \
     -h "$height" \
     -d windows \
-    -c \
     --timing realtime \
     --save-cast "$cast" \
     -o "$movie" \

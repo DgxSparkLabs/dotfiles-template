@@ -149,7 +149,7 @@ For the ongoing per-machine workflow, see [Multiple machines](#multiple-machines
 
 You stay on your machine branch. Shared defaults stay on the baseline branch from step 1 (`system`, unless you set `dotfiles.systemRef` to another name). GitHub can keep `main` as its default. [`dotfiles-update`](#system-updates-dotfiles-update) merges the baseline you named.
 
-The pictures are a laptop whose branch is `laptop`. Each picture is the command block above it, in that order. Run them from any directory; `dotfiles` always uses `$HOME` as the work tree.
+The pictures are a laptop whose branch is `laptop`. Each picture is the command block above it, in that order. Run them from any directory; `dotfiles` always uses `$HOME` as the work tree. This recording ran on a GitHub-hosted runner, so the home directory in the pictures is `/home/runner` and `dotfiles push` reports a local remote path.
 
 **Two directories.** `ls` lists `dotfiles/` (the scripts) and `dotfiles.git/` (the git database: `HEAD`, `objects`, `refs`). `dotfiles status -sb` prints this machine's branch.
 
