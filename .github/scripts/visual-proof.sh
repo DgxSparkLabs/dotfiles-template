@@ -229,23 +229,37 @@ story_walk_away() {
   echo "Publishing ci-machine once, so the timer has an upstream."
   hold
   show gitdir push -u origin HEAD
+  echo "Installing the timer."
+  hold
+  show bash "$TOOL/dotfiles-timer.sh" install
+  # enable --now can run the unit immediately. Stop it so the recording shows
+  # this script's commit and push, not a second run that finds nothing to do.
+  systemctl --user stop dotfiles-git-commit.timer
+  systemctl --user stop dotfiles-git-commit.service || true
   printf '\n# left the desk\n' >> .bashrc
   echo "The timer script commits tracked changes and pushes."
   hold
-  show bash "$TOOL/dotfiles-timer.sh" install
-  show bash "$HOME/.local/state/dotfiles/auto-commit.sh"
-  gitdir log -1 --format=%s | grep -F .bashrc >/dev/null
-  echo "Latest commit:"
-  show gitdir log -1 --format=%s
-  # A bare git dir does not keep refs/remotes, so @{u} is not a remote-tracking
-  # ref here. The push landed if the origin branch matches HEAD.
-  local head remote_head
-  head="$(gitdir rev-parse HEAD)"
-  remote_head="$(git --git-dir="$REMOTE" rev-parse refs/heads/ci-machine)"
-  if [ "$head" != "$remote_head" ]; then
+  local before after log line
+  before="$(git --git-dir="$REMOTE" rev-parse refs/heads/ci-machine)"
+  log="$(mktemp)"
+  bash "$HOME/.local/state/dotfiles/auto-commit.sh" >"$log" 2>&1
+  if grep -F 'Everything up-to-date' "$log"; then
+    echo "FAIL: timer script had nothing new to push"
+    exit 1
+  fi
+  grep -F '.bashrc' "$log" >/dev/null
+  while IFS= read -r line || [ -n "${line:-}" ]; do
+    printf '%s\n' "$line"
+    sleep 0.35
+  done <"$log"
+  rm -f "$log"
+  after="$(git --git-dir="$REMOTE" rev-parse refs/heads/ci-machine)"
+  if [ "$before" = "$after" ]; then
     echo "FAIL: timer commit was not pushed"
     exit 1
   fi
+  echo "Latest commit:"
+  show gitdir log -1 --format=%s
   echo "Remote ci-machine matches this laptop ($(git --git-dir="$REMOTE" rev-parse --short refs/heads/ci-machine))."
   hold
   echo "The timer committed the bashrc edit and pushed ci-machine."
