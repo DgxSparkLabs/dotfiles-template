@@ -4,6 +4,7 @@
 set -euo pipefail
 
 PROOF_OUT="${PROOF_OUT:-$GITHUB_WORKSPACE/proof}"
+USAGE_OUT="${USAGE_OUT:-$PROOF_OUT/usage}"
 REMOTE="${REMOTE:-/tmp/dotfiles-remote.git}"
 TOOL="$GITHUB_WORKSPACE/.local/share/dotfiles"
 
@@ -42,12 +43,6 @@ prepare_remote() {
   rm -rf "$seed"
 }
 
-step_bootstrap() {
-  banner "bootstrap onto ci-machine, baseline system"
-  bash "$TOOL/bootstrap.sh" --repo "$REMOTE" --branch ci-machine --system-ref system
-  echo "PROOF bootstrap ok"
-}
-
 step_layout() {
   cd "$HOME"
   banner "machine branch, not the host default"
@@ -60,9 +55,9 @@ step_layout() {
   test -f "$HOME/.local/share/dotfiles/bootstrap.sh"
   echo "program bootstrap.sh: present"
   test ! -e "$HOME/.local/share/dotfiles/HEAD"
-  echo "program HEAD file: absent"
+  echo "program directory is not a git database (no HEAD file in it)"
   test ! -e "$(old_directory)"
-  echo "old directory: absent"
+  echo "legacy home directory was not created"
   banner "git add -A does not stage the git database"
   gitdir add -A
   local staged
@@ -98,32 +93,6 @@ step_hooks() {
   echo "PROOF hooks ok"
 }
 
-step_doctor() {
-  cd "$HOME"
-  banner "doctor"
-  bash "$TOOL/dotfiles-doctor.sh" --skip-network
-  echo "PROOF doctor ok"
-}
-
-step_update() {
-  cd "$HOME"
-  banner "merge the named baseline, not the host default"
-  bash "$TOOL/dotfiles-update.sh"
-  echo "HEAD=$(gitdir symbolic-ref HEAD)"
-  test -f "$HOME/.local/share/dotfiles/SYSTEM_ONLY.txt"
-  echo "SYSTEM_ONLY.txt: present (came from system)"
-  test ! -e "$HOME/DEFAULT_ONLY.txt"
-  echo "DEFAULT_ONLY.txt: absent (stayed on the default branch)"
-  echo "PROOF update ok"
-}
-
-step_timer_install() {
-  cd "$HOME"
-  banner "install the timer"
-  bash "$TOOL/dotfiles-timer.sh" install
-  echo "PROOF timer-install ok"
-}
-
 step_timer_where() {
   cd "$HOME"
   banner "timer files live in the state directory"
@@ -150,6 +119,124 @@ step_uninstall() {
   test -f "$HOME/.local/share/dotfiles/dotfiles-timer.sh"
   echo "program: kept"
   echo "PROOF uninstall ok"
+}
+
+story_new_machine() {
+  banner "Set up this laptop"
+  echo "Machine branch: ci-machine"
+  echo "Shared baseline: system"
+  echo "GitHub's default branch is left alone."
+  bash "$TOOL/bootstrap.sh" --repo "$REMOTE" --branch ci-machine --system-ref system
+  echo "You are on $(gitdir symbolic-ref --short HEAD). Updates merge $(gitdir config --get dotfiles.systemRef)."
+}
+
+story_track_bashrc() {
+  cd "$HOME"
+  banner "Track your bashrc"
+  printf 'alias ll="ls -la"\n' > .bashrc
+  echo "A new file in your home is ignored until you add it with -f."
+  gitdir add -f .bashrc
+  gitdir commit -m "Add bashrc"
+  echo "Branch: $(gitdir symbolic-ref --short HEAD)"
+  gitdir log -1 --oneline
+  echo "status:"
+  gitdir status --short
+  echo "Bashrc is tracked on ci-machine."
+}
+
+story_edit_tomorrow() {
+  cd "$HOME"
+  banner "The next day you change bashrc"
+  printf '\n# prefer vim\nexport EDITOR=vim\n' >> .bashrc
+  local status
+  status="$(gitdir status --short)"
+  printf '%s\n' "$status"
+  printf '%s\n' "$status" | grep -F .bashrc >/dev/null
+  gitdir add -u .
+  gitdir commit -m "Set EDITOR"
+  echo "status after commit:"
+  gitdir status --short
+  echo "Branch is still $(gitdir symbolic-ref --short HEAD)"
+  echo "The edit is committed, and you are still on ci-machine."
+}
+
+story_doctor() {
+  cd "$HOME"
+  banner "Check this laptop"
+  bash "$TOOL/dotfiles-doctor.sh" --skip-network
+}
+
+story_inherit() {
+  cd "$HOME"
+  banner "A shared improvement landed on system"
+  echo "This laptop merges system. It does not merge GitHub's default branch."
+  bash "$TOOL/dotfiles-update.sh"
+  echo "Shared file:"
+  cat "$HOME/.local/share/dotfiles/SYSTEM_ONLY.txt"
+  if [ -e "$HOME/DEFAULT_ONLY.txt" ]; then
+    echo "FAIL: default-branch file arrived"
+    exit 1
+  fi
+  echo "Default-branch-only file: not on this machine"
+  echo "Branch is still $(gitdir symbolic-ref --short HEAD)"
+  echo "Shared file arrived. Default-branch file did not. Still on ci-machine."
+}
+
+story_walk_away() {
+  cd "$HOME"
+  banner "You change bashrc and walk away"
+  printf '\n# left the desk\n' >> .bashrc
+  echo "The timer script commits tracked changes and pushes."
+  bash "$TOOL/dotfiles-timer.sh" install
+  bash "$HOME/.local/state/dotfiles/auto-commit.sh"
+  gitdir log -1 --format=%s | grep -F .bashrc
+  echo "Latest commit:"
+  gitdir log -1 --format=%s
+  echo "The timer committed the bashrc edit on $(gitdir symbolic-ref --short HEAD)."
+}
+
+record_movie() {
+  local name="$1"
+  local expect="$2"
+  local height="$3"
+  local header="$4"
+  local cast="$PROOF_OUT/$name.cast"
+  local movie="$USAGE_OUT/$name.svg"
+  local png="$PROOF_OUT/$name.png"
+
+  # -v writes an animated SVG (the movie). --save-cast keeps the tape.
+  console2svg capture \
+    -v \
+    --no-loop \
+    --sleep 2 \
+    --fps 8 \
+    --mask-auto false \
+    -w 110 \
+    -h "$height" \
+    -d windows \
+    -c \
+    --header "$header" \
+    --timing realtime \
+    --save-cast "$cast" \
+    -o "$movie" \
+    -- bash "$0" story "$name"
+  if ! grep -q "$expect" "$cast"; then
+    echo "visual-proof: tape $name.cast does not contain: $expect" >&2
+    exit 1
+  fi
+  console2svg capture \
+    --in "$cast" \
+    --mask-auto false \
+    -w 110 \
+    -h "$height" \
+    -d windows \
+    --svg-converter rsvg-convert \
+    -o "$png" \
+    --format png
+  test -s "$movie"
+  test -s "$png"
+  test -s "$cast"
+  cp "$movie" "$PROOF_OUT/$name.svg"
 }
 
 record() {
@@ -199,29 +286,35 @@ Each step is one recording.
 .svg   still image of the final screen, captured with the tape
 .png   the same still, rendered from the tape for review
 
-01-bootstrap     bootstrap.sh checks out ci-machine and records system as the baseline
-02-layout        HEAD is ci-machine, remote default is main, git dir and program are split, git add -A does not stage the git dir
-03-hooks         core.hooksPath is the program .githooks; the runner venv is under ~/.cache
-04-doctor        doctor reports the healthy setup
-05-update        dotfiles update merges origin/system; the default-branch-only file stays absent
-06-timer-install timer install finishes against the split git dir
-07-timer-where   the generated script and unit point at ~/.local/state, not the git dir
-08-uninstall     uninstall deletes timer files and leaves the git dir and the program
+01-new-machine    animated: bootstrap this laptop onto ci-machine; updates merge system
+02-layout          still: program directory is not the git database; legacy path was not created
+02-track-bashrc    animated: first add -f of .bashrc, commit stays on ci-machine
+03-edit-tomorrow   animated: a later edit shows in status, then commit
+03-hooks           still: hooks path and cache venv
+04-doctor          animated: doctor, all hard checks passed
+05-inherit-system  animated: dotfiles update merges system and skips the default branch
+06-walk-away       animated: timer script commits and pushes the bashrc edit
+07-timer-where     still: ExecStart is the state-dir script
+08-uninstall       still: timer files gone; git dir and program kept
+
+Animated SVGs in usage/ are the README movies. Each .cast next to them is the tape.
 EOF
 }
 
 all() {
-  mkdir -p "$PROOF_OUT"
+  mkdir -p "$PROOF_OUT" "$USAGE_OUT"
   git config --global user.email "ci@github-actions"
   git config --global user.name "CI"
   git config --global --add safe.directory '*'
   prepare_remote
-  record 01-bootstrap 'PROOF bootstrap ok'
+  record_movie 01-new-machine 'You are on ci-machine. Updates merge system.' 24 "Set up this laptop"
   record 02-layout 'PROOF layout ok'
+  record_movie 02-track-bashrc 'Bashrc is tracked on ci-machine.' 24 "Track your bashrc"
+  record_movie 03-edit-tomorrow 'The edit is committed, and you are still on ci-machine.' 24 "Edit bashrc the next day"
   record 03-hooks 'PROOF hooks ok'
-  record 04-doctor 'PROOF doctor ok'
-  record 05-update 'PROOF update ok'
-  record 06-timer-install 'PROOF timer-install ok'
+  record_movie 04-doctor 'all hard checks PASSED' 42 "Check this laptop"
+  record_movie 05-inherit-system 'Shared file arrived. Default-branch file did not. Still on ci-machine.' 32 "Inherit the shared baseline"
+  record_movie 06-walk-away 'The timer committed the bashrc edit on ci-machine.' 36 "Walk away; the timer commits"
   record 07-timer-where 'PROOF timer-where ok'
   record 08-uninstall 'PROOF uninstall ok'
   write_index
@@ -232,19 +325,26 @@ case "${1:-}" in
   all) all ;;
   step)
     case "${2:-}" in
-      01-bootstrap) step_bootstrap ;;
       02-layout) step_layout ;;
       03-hooks) step_hooks ;;
-      04-doctor) step_doctor ;;
-      05-update) step_update ;;
-      06-timer-install) step_timer_install ;;
       07-timer-where) step_timer_where ;;
       08-uninstall) step_uninstall ;;
       *) echo "visual-proof: unknown step ${2:-}" >&2; exit 2 ;;
     esac
     ;;
+  story)
+    case "${2:-}" in
+      01-new-machine) story_new_machine ;;
+      02-track-bashrc) story_track_bashrc ;;
+      03-edit-tomorrow) story_edit_tomorrow ;;
+      04-doctor) story_doctor ;;
+      05-inherit-system) story_inherit ;;
+      06-walk-away) story_walk_away ;;
+      *) echo "visual-proof: unknown story ${2:-}" >&2; exit 2 ;;
+    esac
+    ;;
   *)
-    echo "usage: visual-proof.sh all | visual-proof.sh step <name>" >&2
+    echo "usage: visual-proof.sh all | visual-proof.sh step <name> | visual-proof.sh story <name>" >&2
     exit 2
     ;;
 esac

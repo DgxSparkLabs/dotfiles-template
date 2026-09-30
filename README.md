@@ -134,10 +134,12 @@ dotfiles push -u origin WSL
 ### 4. Add your dotfiles
 
 ```bash
-dotfiles add ~/.bashrc
+dotfiles add -f ~/.bashrc
 dotfiles commit -m "Add bashrc"
 dotfiles push
 ```
+
+The root ignore hides the rest of `$HOME`, so the first add of a new file uses `-f`. After that, `dotfiles add -u` and the timer see it.
 
 For the ongoing per-machine workflow, see [Multiple machines](#multiple-machines).
 
@@ -149,10 +151,40 @@ You're always on your machine's branch (`<machine-name>`). Routine changes commi
 
 ```bash
 dotfiles status
-dotfiles add ~/.config/someapp/config
+dotfiles add -f ~/.config/someapp/config
 dotfiles commit -m "Add someapp config"
 dotfiles push                 # pushes to <machine-name> on origin
 ```
+
+The first add of a path uses `-f`. Later edits of that tracked file do not.
+
+## Watch a laptop use it
+
+These are animated SVGs from a real run of the scripts ([console2svg](https://github.com/arika0093/console2svg) `-v`, with an asciicast tape saved beside the proof artifact). GitHub's README often shows the opening frame. Open the SVG file to play the movie.
+
+**Set up the laptop.** The machine branch is `ci-machine`. Shared defaults stay on `system`. GitHub's default branch is left as `main`.
+
+![Set up this laptop](docs/usage/01-new-machine.svg)
+
+**Track `.bashrc`.** A new file in your home is ignored until `dotfiles add -f`. The commit stays on the machine branch.
+
+![Track your bashrc](docs/usage/02-track-bashrc.svg)
+
+**Change it the next day.** `dotfiles status` shows the edit, then you commit. You are still on the machine branch.
+
+![Edit bashrc the next day](docs/usage/03-edit-tomorrow.svg)
+
+**Ask the doctor.** Hooks, the cache virtualenv, a clean tree, and the `system` baseline all pass.
+
+![Check this laptop](docs/usage/04-doctor.svg)
+
+**Take a shared improvement.** `dotfiles update` merges `system`. A file that exists only on the default branch does not come along. HEAD stays on the machine branch.
+
+![Inherit the shared baseline](docs/usage/05-inherit-system.svg)
+
+**Walk away.** After the timer is installed, its script commits the `.bashrc` edit and pushes it.
+
+![Walk away; the timer commits](docs/usage/06-walk-away.svg)
 
 For changes you want every machine to inherit, see [Multiple machines](#multiple-machines) — those go on the baseline branch (`dotfiles.systemRef`).
 
