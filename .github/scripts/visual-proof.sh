@@ -129,7 +129,7 @@ step_timer_where() {
   banner "timer files live in the state directory"
   test -f "$HOME/.local/state/dotfiles/auto-commit.sh"
   echo "state script: $HOME/.local/state/dotfiles/auto-commit.sh"
-  echo "ExecStart=$(grep -F ExecStart "$HOME/.config/systemd/user/dotfiles-git-commit.service")"
+  grep -F ExecStart "$HOME/.config/systemd/user/dotfiles-git-commit.service"
   test ! -e "$HOME/.local/share/dotfiles.git/auto-commit.sh"
   echo "script inside git dir: absent"
   test ! -e "$HOME/.local/share/dotfiles/auto-commit.sh"
@@ -179,6 +179,7 @@ record() {
   # Still PNG is rendered from the tape, so the picture is that recording.
   console2svg capture \
     --in "$cast" \
+    --mask-auto false \
     -w 120 \
     -h 48 \
     -d windows \
