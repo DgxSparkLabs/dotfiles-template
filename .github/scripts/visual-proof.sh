@@ -237,10 +237,17 @@ story_walk_away() {
   gitdir log -1 --format=%s | grep -F .bashrc >/dev/null
   echo "Latest commit:"
   show gitdir log -1 --format=%s
-  if [ "$(gitdir rev-parse HEAD)" != "$(gitdir rev-parse '@{u}')" ]; then
+  # A bare git dir does not keep refs/remotes, so @{u} is not a remote-tracking
+  # ref here. The push landed if the origin branch matches HEAD.
+  local head remote_head
+  head="$(gitdir rev-parse HEAD)"
+  remote_head="$(git --git-dir="$REMOTE" rev-parse refs/heads/ci-machine)"
+  if [ "$head" != "$remote_head" ]; then
     echo "FAIL: timer commit was not pushed"
     exit 1
   fi
+  echo "Remote ci-machine matches this laptop ($(git --git-dir="$REMOTE" rev-parse --short refs/heads/ci-machine))."
+  hold
   echo "The timer committed the bashrc edit and pushed ci-machine."
   hold
 }
