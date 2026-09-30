@@ -13,7 +13,7 @@ show_log() {
   local log="$1" line
   while IFS= read -r line || [ -n "${line:-}" ]; do
     printf '%s\n' "$line"
-    sleep 0.3
+    sleep 0.5
   done <"$log"
 }
 
@@ -259,11 +259,11 @@ story_walk_away() {
   printf '$ git rev-parse HEAD\n'
   head="$(gitdir rev-parse HEAD)"
   printf '%s\n' "$head"
-  sleep 0.3
+  sleep 0.5
   printf '$ git --git-dir=%s rev-parse refs/heads/ci-machine\n' "$REMOTE"
   remote_head="$(git --git-dir="$REMOTE" rev-parse refs/heads/ci-machine)"
   printf '%s\n' "$remote_head"
-  sleep 0.3
+  sleep 0.5
   if [ "$head" != "$remote_head" ]; then
     echo "FAIL: timer commit was not pushed"
     exit 1
