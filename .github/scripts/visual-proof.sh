@@ -8,22 +8,65 @@ USAGE_OUT="${USAGE_OUT:-$PROOF_OUT/usage}"
 REMOTE="${REMOTE:-/tmp/dotfiles-remote.git}"
 TOOL="$GITHUB_WORKSPACE/.local/share/dotfiles"
 
-banner() { printf '\n--- %s ---\n' "$1"; }
-
-# Hold a narrative line long enough to read in the movie.
-hold() { sleep "${PROOF_HOLD:-0.6}"; }
-
-# Replay a command one line at a time. A dump that finishes in one frame
-# is not a movie of someone using the system.
-show() {
-  local log line
-  log="$(mktemp)"
-  "$@" >"$log" 2>&1
+# Replay stdout and stderr slowly enough that a frame can hold each line.
+show_log() {
+  local log="$1" line
   while IFS= read -r line || [ -n "${line:-}" ]; do
     printf '%s\n' "$line"
-    sleep 0.35
+    sleep 0.3
   done <"$log"
+}
+
+show() {
+  local log
+  log="$(mktemp)"
+  "$@" >"$log" 2>&1
+  show_log "$log"
   rm -f "$log"
+}
+
+# $1 is the command a reviewer reads. The rest is what runs.
+run() {
+  local display="$1"
+  shift
+  printf '$ %s\n' "$display"
+  show "$@"
+}
+
+# git diff exits 1 when it finds a change. That exit is the change, not a failure.
+run_diff() {
+  local display="$1" log rc
+  shift
+  printf '$ %s\n' "$display"
+  log="$(mktemp)"
+  set +e
+  "$@" >"$log" 2>&1
+  rc=$?
+  set -e
+  show_log "$log"
+  rm -f "$log"
+  if [ "$rc" -gt 1 ]; then
+    echo "FAIL: diff failed: $display"
+    exit 1
+  fi
+}
+
+# Same, when the evidence is that the command fails (ignored path, missing file).
+run_fail() {
+  local display="$1" log rc
+  shift
+  printf '$ %s\n' "$display"
+  log="$(mktemp)"
+  set +e
+  "$@" >"$log" 2>&1
+  rc=$?
+  set -e
+  show_log "$log"
+  rm -f "$log"
+  if [ "$rc" -eq 0 ]; then
+    echo "FAIL: expected a failing command: $display"
+    exit 1
+  fi
 }
 
 gitdir() {
@@ -61,186 +104,144 @@ prepare_remote() {
 
 step_layout() {
   cd "$HOME"
-  banner "machine branch, not the host default"
-  echo "HEAD=$(gitdir symbolic-ref HEAD)"
-  echo "systemRef=$(gitdir config --get dotfiles.systemRef)"
-  echo "remote default=$(git --git-dir="$REMOTE" symbolic-ref HEAD)"
-  banner "git database and program are different directories"
-  test -d "$HOME/.local/share/dotfiles.git/objects"
-  echo "git dir objects: present"
-  test -f "$HOME/.local/share/dotfiles/bootstrap.sh"
-  echo "program bootstrap.sh: present"
-  test ! -e "$HOME/.local/share/dotfiles/HEAD"
-  echo "program directory is not a git database (no HEAD file in it)"
-  test ! -e "$(old_directory)"
-  echo "legacy home directory was not created"
-  banner "git add -A does not stage the git database"
-  gitdir add -A
-  local staged
-  staged="$(gitdir diff --cached --name-only || true)"
-  if printf '%s\n' "$staged" | grep -F 'dotfiles.git/'; then
-    echo "FAIL: git add -A staged the git database"
+  local old rc
+  old="$(old_directory)"
+  run "git symbolic-ref HEAD" gitdir symbolic-ref HEAD
+  run "git config --get dotfiles.systemRef" gitdir config --get dotfiles.systemRef
+  run "git --git-dir=$REMOTE symbolic-ref HEAD" git --git-dir="$REMOTE" symbolic-ref HEAD
+  run "ls -d ~/.local/share/dotfiles.git/HEAD" ls -d "$HOME/.local/share/dotfiles.git/HEAD"
+  run "ls -d ~/.local/share/dotfiles/bootstrap.sh" ls -d "$HOME/.local/share/dotfiles/bootstrap.sh"
+  run_fail "ls -d ~/.local/share/dotfiles/HEAD" ls -d "$HOME/.local/share/dotfiles/HEAD"
+  run_fail "ls -d $old" ls -d "$old"
+  run "git add -A" gitdir add -A
+  printf '$ git diff --cached --quiet; echo $?\n'
+  set +e
+  gitdir diff --cached --quiet
+  rc=$?
+  set -e
+  echo "$rc"
+  if [ "$rc" -ne 0 ]; then
+    gitdir diff --cached --name-only
+    echo "FAIL: git add -A staged paths"
     gitdir reset -q
     exit 1
   fi
-  if [ -z "$staged" ]; then
-    echo "staged paths: (none)"
-  else
-    echo "staged paths:"
-    printf '%s\n' "$staged"
-  fi
   gitdir reset -q
-  gitdir check-ignore -v .local/share/dotfiles.git/HEAD
+  run "git check-ignore -v .local/share/dotfiles.git/HEAD" \
+    gitdir check-ignore -v .local/share/dotfiles.git/HEAD
   echo "PROOF layout ok"
 }
 
 step_hooks() {
   cd "$HOME"
-  banner "hooks path is the program directory"
   gitdir config core.hooksPath "$HOME/.local/share/dotfiles/.githooks"
-  echo "core.hooksPath=$(gitdir config --get core.hooksPath)"
-  banner "runner environment is the cache directory"
+  run "git config --get core.hooksPath" gitdir config --get core.hooksPath
   export UV_PROJECT_ENVIRONMENT="$HOME/.cache/dotfiles/githooks-runner"
-  uv sync --project "$HOME/.local/share/dotfiles/githooks-runner" --frozen -q
-  test -f "$UV_PROJECT_ENVIRONMENT/pyvenv.cfg"
-  echo "cache pyvenv.cfg: present"
-  test ! -e "$HOME/.local/share/dotfiles/githooks-runner/.venv"
-  echo "program .venv: absent"
+  run "uv sync --project ~/.local/share/dotfiles/githooks-runner --frozen" \
+    uv sync --project "$HOME/.local/share/dotfiles/githooks-runner" --frozen -q
+  run "ls -d ~/.cache/dotfiles/githooks-runner/pyvenv.cfg" \
+    ls -d "$HOME/.cache/dotfiles/githooks-runner/pyvenv.cfg"
+  run_fail "ls -d ~/.local/share/dotfiles/githooks-runner/.venv" \
+    ls -d "$HOME/.local/share/dotfiles/githooks-runner/.venv"
   echo "PROOF hooks ok"
 }
 
 step_timer_where() {
   cd "$HOME"
-  banner "timer files live in the state directory"
-  test -f "$HOME/.local/state/dotfiles/auto-commit.sh"
-  echo "state script: $HOME/.local/state/dotfiles/auto-commit.sh"
-  grep -F ExecStart "$HOME/.config/systemd/user/dotfiles-git-commit.service"
-  test ! -e "$HOME/.local/share/dotfiles.git/auto-commit.sh"
-  echo "script inside git dir: absent"
-  test ! -e "$HOME/.local/share/dotfiles/auto-commit.sh"
-  echo "script inside program dir: absent"
+  run "ls -d ~/.local/state/dotfiles/auto-commit.sh" \
+    ls -d "$HOME/.local/state/dotfiles/auto-commit.sh"
+  run "grep ExecStart ~/.config/systemd/user/dotfiles-git-commit.service" \
+    grep -F ExecStart "$HOME/.config/systemd/user/dotfiles-git-commit.service"
+  run_fail "ls -d ~/.local/share/dotfiles.git/auto-commit.sh" \
+    ls -d "$HOME/.local/share/dotfiles.git/auto-commit.sh"
+  run_fail "ls -d ~/.local/share/dotfiles/auto-commit.sh" \
+    ls -d "$HOME/.local/share/dotfiles/auto-commit.sh"
   echo "PROOF timer-where ok"
 }
 
 step_uninstall() {
   cd "$HOME"
-  banner "uninstall removes timer files and leaves the repo"
-  bash "$TOOL/dotfiles-timer.sh" uninstall
-  test ! -e "$HOME/.config/systemd/user/dotfiles-git-commit.service"
-  echo "unit: absent"
-  test ! -e "$HOME/.local/state/dotfiles/auto-commit.sh"
-  echo "state script: absent"
-  test -d "$HOME/.local/share/dotfiles.git/objects"
-  echo "git dir: kept"
-  test -f "$HOME/.local/share/dotfiles/dotfiles-timer.sh"
-  echo "program: kept"
+  run "dotfiles-timer uninstall" bash "$TOOL/dotfiles-timer.sh" uninstall
+  run_fail "ls -d ~/.config/systemd/user/dotfiles-git-commit.service" \
+    ls -d "$HOME/.config/systemd/user/dotfiles-git-commit.service"
+  run_fail "ls -d ~/.local/state/dotfiles/auto-commit.sh" \
+    ls -d "$HOME/.local/state/dotfiles/auto-commit.sh"
+  run "ls -d ~/.local/share/dotfiles.git/HEAD" \
+    ls -d "$HOME/.local/share/dotfiles.git/HEAD"
+  run "ls -d ~/.local/share/dotfiles/dotfiles-timer.sh" \
+    ls -d "$HOME/.local/share/dotfiles/dotfiles-timer.sh"
   echo "PROOF uninstall ok"
 }
 
 story_new_machine() {
-  banner "Set up this laptop"
-  hold
-  echo "Machine branch: ci-machine"
-  hold
-  echo "Shared baseline: system"
-  hold
-  echo "GitHub's default branch is left alone."
-  hold
-  show bash "$TOOL/bootstrap.sh" --repo "$REMOTE" --branch ci-machine --system-ref system
-  echo "You are on $(gitdir symbolic-ref --short HEAD). Updates merge $(gitdir config --get dotfiles.systemRef)."
-  hold
+  cd "$HOME"
+  run "bash bootstrap.sh --repo $REMOTE --branch ci-machine --system-ref system" \
+    bash "$TOOL/bootstrap.sh" --repo "$REMOTE" --branch ci-machine --system-ref system
+  run "git symbolic-ref HEAD" gitdir symbolic-ref HEAD
+  run "git config --get dotfiles.systemRef" gitdir config --get dotfiles.systemRef
+  run "git --git-dir=$REMOTE symbolic-ref HEAD" \
+    git --git-dir="$REMOTE" symbolic-ref HEAD
 }
 
 story_track_bashrc() {
   cd "$HOME"
-  banner "Track your bashrc"
-  hold
   printf 'alias ll="ls -la"\n' > .bashrc
-  echo "A new file in your home is ignored until you add it with -f."
-  hold
-  show gitdir add -f .bashrc
-  show gitdir commit -m "Add bashrc"
-  echo "Branch: $(gitdir symbolic-ref --short HEAD)"
-  hold
-  show gitdir log -1 --oneline
-  echo "status:"
-  show gitdir status --short
-  echo "Bashrc is tracked on ci-machine."
-  hold
+  run "git check-ignore -v .bashrc" gitdir check-ignore -v .bashrc
+  run_fail "git add .bashrc" gitdir add .bashrc
+  run "git add -f .bashrc" gitdir add -f .bashrc
+  run "git commit -m 'Add bashrc'" gitdir commit -m "Add bashrc"
+  run "git status -sb" gitdir status -sb
+  run "git log -1 --oneline" gitdir log -1 --oneline
 }
 
 story_edit_tomorrow() {
   cd "$HOME"
-  banner "The next day you change bashrc"
-  hold
   printf '\n# prefer vim\nexport EDITOR=vim\n' >> .bashrc
-  echo "status:"
-  hold
-  local status
-  status="$(gitdir status --short)"
-  printf '%s\n' "$status"
-  printf '%s\n' "$status" | grep -F .bashrc >/dev/null
-  hold
-  show gitdir add -u .
-  show gitdir commit -m "Set EDITOR"
-  echo "status after commit:"
-  show gitdir status --short
-  echo "Branch is still $(gitdir symbolic-ref --short HEAD)"
-  hold
-  echo "The edit is committed, and you are still on ci-machine."
-  hold
+  run_diff "git diff -- .bashrc" gitdir diff -- .bashrc
+  grep -F 'export EDITOR=vim' < <(gitdir diff -- .bashrc || true) >/dev/null
+  run "git add -u ." gitdir add -u .
+  run "git commit -m 'Set EDITOR'" gitdir commit -m "Set EDITOR"
+  run "git status -sb" gitdir status -sb
+  run "git log -1 --oneline" gitdir log -1 --oneline
 }
 
 story_doctor() {
   cd "$HOME"
-  banner "Check this laptop"
-  hold
-  show bash "$TOOL/dotfiles-doctor.sh" --skip-network
-  hold
+  run "dotfiles-doctor --skip-network" bash "$TOOL/dotfiles-doctor.sh" --skip-network
 }
 
 story_inherit() {
   cd "$HOME"
-  banner "A shared improvement landed on system"
-  hold
-  echo "This laptop merges system. It does not merge GitHub's default branch."
-  hold
-  show bash "$TOOL/dotfiles-update.sh"
-  echo "Shared file:"
-  hold
-  cat "$HOME/.local/share/dotfiles/SYSTEM_ONLY.txt"
-  hold
-  if [ -e "$HOME/DEFAULT_ONLY.txt" ]; then
-    echo "FAIL: default-branch file arrived"
-    exit 1
-  fi
-  echo "Default-branch-only file: not on this machine"
-  hold
-  echo "Branch is still $(gitdir symbolic-ref --short HEAD)"
-  hold
-  echo "Shared file arrived. Default-branch file did not. Still on ci-machine."
-  hold
+  run "git --git-dir=$REMOTE show refs/heads/main:DEFAULT_ONLY.txt" \
+    git --git-dir="$REMOTE" show refs/heads/main:DEFAULT_ONLY.txt
+  run "git --git-dir=$REMOTE show refs/heads/system:.local/share/dotfiles/SYSTEM_ONLY.txt" \
+    git --git-dir="$REMOTE" show refs/heads/system:.local/share/dotfiles/SYSTEM_ONLY.txt
+  run_fail "git --git-dir=$REMOTE cat-file -e refs/heads/main:.local/share/dotfiles/SYSTEM_ONLY.txt" \
+    git --git-dir="$REMOTE" cat-file -e refs/heads/main:.local/share/dotfiles/SYSTEM_ONLY.txt
+  run_fail "git --git-dir=$REMOTE cat-file -e refs/heads/system:DEFAULT_ONLY.txt" \
+    git --git-dir="$REMOTE" cat-file -e refs/heads/system:DEFAULT_ONLY.txt
+  run "dotfiles-update" bash "$TOOL/dotfiles-update.sh"
+  run "cat .local/share/dotfiles/SYSTEM_ONLY.txt" \
+    cat "$HOME/.local/share/dotfiles/SYSTEM_ONLY.txt"
+  run_fail "ls -d DEFAULT_ONLY.txt" ls -d "$HOME/DEFAULT_ONLY.txt"
+  run "git status -sb" gitdir status -sb
+  run "git log -1 --format=%s" gitdir log -1 --format=%s
 }
 
 story_walk_away() {
   cd "$HOME"
-  banner "You change bashrc and walk away"
-  hold
-  echo "Publishing ci-machine once, so the timer has an upstream."
-  hold
-  show gitdir push -u origin HEAD
-  echo "Installing the timer."
-  hold
-  show bash "$TOOL/dotfiles-timer.sh" install
-  # enable --now can run the unit immediately. Stop it so the recording shows
-  # this script's commit and push, not a second run that finds nothing to do.
+  local before after log head remote_head
+  run "git push -u origin HEAD" gitdir push -u origin HEAD
+  run "dotfiles-timer install" bash "$TOOL/dotfiles-timer.sh" install
+  # enable --now can run the unit immediately. Stop it so this recording shows
+  # the script's own commit and push.
   systemctl --user stop dotfiles-git-commit.timer
   systemctl --user stop dotfiles-git-commit.service || true
   printf '\n# left the desk\n' >> .bashrc
-  echo "The timer script commits tracked changes and pushes."
-  hold
-  local before after log line
+  run_diff "git diff -- .bashrc" gitdir diff -- .bashrc
+  grep -F '# left the desk' < <(gitdir diff -- .bashrc || true) >/dev/null
   before="$(git --git-dir="$REMOTE" rev-parse refs/heads/ci-machine)"
+  printf '$ bash ~/.local/state/dotfiles/auto-commit.sh\n'
   log="$(mktemp)"
   bash "$HOME/.local/state/dotfiles/auto-commit.sh" >"$log" 2>&1
   if grep -F 'Everything up-to-date' "$log"; then
@@ -248,22 +249,25 @@ story_walk_away() {
     exit 1
   fi
   grep -F '.bashrc' "$log" >/dev/null
-  while IFS= read -r line || [ -n "${line:-}" ]; do
-    printf '%s\n' "$line"
-    sleep 0.35
-  done <"$log"
+  show_log "$log"
   rm -f "$log"
   after="$(git --git-dir="$REMOTE" rev-parse refs/heads/ci-machine)"
   if [ "$before" = "$after" ]; then
     echo "FAIL: timer commit was not pushed"
     exit 1
   fi
-  echo "Latest commit:"
-  show gitdir log -1 --format=%s
-  echo "Remote ci-machine matches this laptop ($(git --git-dir="$REMOTE" rev-parse --short refs/heads/ci-machine))."
-  hold
-  echo "The timer committed the bashrc edit and pushed ci-machine."
-  hold
+  printf '$ git rev-parse HEAD\n'
+  head="$(gitdir rev-parse HEAD)"
+  printf '%s\n' "$head"
+  sleep 0.3
+  printf '$ git --git-dir=%s rev-parse refs/heads/ci-machine\n' "$REMOTE"
+  remote_head="$(git --git-dir="$REMOTE" rev-parse refs/heads/ci-machine)"
+  printf '%s\n' "$remote_head"
+  sleep 0.3
+  if [ "$head" != "$remote_head" ]; then
+    echo "FAIL: timer commit was not pushed"
+    exit 1
+  fi
 }
 
 record_movie() {
@@ -364,18 +368,20 @@ Each step is one recording.
 .svg   still image of the final screen, captured with the tape
 .png   the same still, rendered from the tape for review
 
-01-new-machine    animated: bootstrap this laptop onto ci-machine; updates merge system
-02-layout          still: program directory is not the git database; legacy path was not created
-02-track-bashrc    animated: first add -f of .bashrc, commit stays on ci-machine
-03-edit-tomorrow   animated: a later edit shows in status, then commit
-03-hooks           still: hooks path and cache venv
-04-doctor          animated: doctor, all hard checks passed
-05-inherit-system  animated: dotfiles update merges system and skips the default branch
-06-walk-away       animated: publish once, then the timer commits and pushes the bashrc edit
-07-timer-where     still: ExecStart is the state-dir script
-08-uninstall       still: timer files gone; git dir and program kept
+Read the command, then the lines under it. A sentence we printed is not the proof.
 
-Animated SVGs in usage/ are the README movies. Each .cast next to them is the tape.
+01-new-machine    symbolic-ref of this machine, dotfiles.systemRef, remote HEAD still main
+02-layout          ls of the git database HEAD, ls failing in the program directory, ls failing for the legacy path, diff --cached exit 0, check-ignore of the git database
+02-track-bashrc    check-ignore matching /*, add rejected, then add -f and the commit
+03-edit-tomorrow   diff hunk for the edit, then status -sb still on the machine branch
+03-hooks           git config core.hooksPath, ls of the cache pyvenv.cfg, ls failing for a program .venv
+04-doctor          one PASS line per hard check
+05-inherit-system  show of the file on main and the file on system, update, cat of the system file, ls failing for the main-only file, status -sb
+06-walk-away       diff hunk, the timer script's commit and push, rev-parse of HEAD and of the remote branch printing the same hash
+07-timer-where     ls of the state-dir script, grep ExecStart, ls failing inside the git dir and the program dir
+08-uninstall       ls failing for the unit and the state script, ls succeeding for the git database and the program
+
+usage/ holds the animated day. The stills stay beside their tapes in this directory.
 EOF
 }
 
@@ -385,14 +391,14 @@ all() {
   git config --global user.name "CI"
   git config --global --add safe.directory '*'
   prepare_remote
-  record_movie 01-new-machine 'You are on ci-machine. Updates merge system.' 24 "Set up this laptop"
+  record_movie 01-new-machine 'refs/heads/main' 24 "Set up this laptop"
   record 02-layout 'PROOF layout ok'
-  record_movie 02-track-bashrc 'Bashrc is tracked on ci-machine.' 24 "Track your bashrc"
-  record_movie 03-edit-tomorrow 'The edit is committed, and you are still on ci-machine.' 24 "Edit bashrc the next day"
+  record_movie 02-track-bashrc 'The following paths are ignored' 40 "Track your bashrc"
+  record_movie 03-edit-tomorrow 'export EDITOR=vim' 32 "Edit bashrc the next day"
   record 03-hooks 'PROOF hooks ok'
-  record_movie 04-doctor 'all hard checks PASSED' 42 "Check this laptop"
-  record_movie 05-inherit-system 'Shared file arrived. Default-branch file did not. Still on ci-machine.' 32 "Inherit the shared baseline"
-  record_movie 06-walk-away 'The timer committed the bashrc edit and pushed ci-machine.' 40 "Walk away; the timer commits"
+  record_movie 04-doctor 'all hard checks PASSED' 36 "Check this laptop"
+  record_movie 05-inherit-system 'No such file' 56 "Inherit the shared baseline"
+  record_movie 06-walk-away '# left the desk' 56 "Walk away; the timer commits"
   record 07-timer-where 'PROOF timer-where ok'
   record 08-uninstall 'PROOF uninstall ok'
   write_index

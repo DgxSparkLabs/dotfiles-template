@@ -147,51 +147,48 @@ For the ongoing per-machine workflow, see [Multiple machines](#multiple-machines
 
 ## Daily use
 
-You're always on your machine's branch (`<machine-name>`). Routine changes commit and push there:
+You stay on `<machine-name>`. Shared defaults stay on the baseline branch from step 1 (`system`, unless you set `dotfiles.systemRef` to another name). GitHub can keep `main` as its default. `dotfiles update` merges the baseline you named, not that default.
+
+**Track a file once.** The root ignore hides the rest of `$HOME`. `check-ignore` prints the pattern, and `add` without `-f` is rejected. Force the path once, then publish the branch so later pushes have an upstream:
 
 ```bash
-dotfiles status
-dotfiles add -f ~/.config/someapp/config
-dotfiles commit -m "Add someapp config"
-dotfiles push                 # pushes to <machine-name> on origin
+dotfiles check-ignore -v ~/.bashrc
+dotfiles add -f ~/.bashrc
+dotfiles commit -m "Add bashrc"
+dotfiles push -u origin <machine-name>
 ```
 
-The first add of a path uses `-f`. Later edits of that tracked file do not.
+**Edit that file later.** It is already tracked. The diff is the change, and `status -sb` still names your machine branch:
 
-## Watch a laptop use it
+```bash
+dotfiles diff ~/.bashrc
+dotfiles add -u .
+dotfiles commit -m "Set EDITOR"
+dotfiles status -sb
+```
 
-These are animated SVGs from a real run of the scripts ([console2svg](https://github.com/arika0093/console2svg) `-v`, with an asciicast tape saved beside the proof artifact). Each movie plays the session, holds the last screen, then repeats. GitHub's README often shows only the opening frame, so open the SVG file to watch it.
+**Take a shared change.** `dotfiles update` merges the baseline onto this branch. A file that exists only on GitHub's default branch stays there. You are still on `<machine-name>`. What belongs on each branch is the [partition contract](#the-partition-contract-system-vs-user).
 
-**Set up the laptop.** The machine branch is `ci-machine`. Shared defaults stay on `system`. GitHub's default branch is left as `main`.
+```bash
+dotfiles update
+```
 
-![Set up this laptop](docs/usage/01-new-machine.svg)
+**Leave the desk.** After [the timer](#auto-commit-optional) is installed, its script commits tracked edits and pushes them. It uses the upstream from `push -u` above. A new file still needs one `add -f` before that script can see it.
 
-**Track `.bashrc`.** A new file in your home is ignored until `dotfiles add -f`. The commit stays on the machine branch.
+The same commands were run on a clean machine. Each recording is the command and git's own output under it:
 
-![Track your bashrc](docs/usage/02-track-bashrc.svg)
-
-**Change it the next day.** `dotfiles status` shows the edit, then you commit. You are still on the machine branch.
-
-![Edit bashrc the next day](docs/usage/03-edit-tomorrow.svg)
-
-**Ask the doctor.** Hooks, the cache virtualenv, a clean tree, and the `system` baseline all pass.
-
-![Check this laptop](docs/usage/04-doctor.svg)
-
-**Take a shared improvement.** `dotfiles update` merges `system`. A file that exists only on the default branch does not come along. HEAD stays on the machine branch.
-
-![Inherit the shared baseline](docs/usage/05-inherit-system.svg)
-
-**Walk away.** The branch is published once, so the timer has an upstream. Its script then commits the `.bashrc` edit and pushes it.
-
-![Walk away; the timer commits](docs/usage/06-walk-away.svg)
-
-For changes you want every machine to inherit, see [Multiple machines](#multiple-machines) — those go on the baseline branch (`dotfiles.systemRef`).
+| Recording | What settles it |
+| --- | --- |
+| [Setup](docs/usage/01-new-machine.svg) | `symbolic-ref` of this machine, `dotfiles.systemRef`, and the remote HEAD still `refs/heads/main` |
+| [First add](docs/usage/02-track-bashrc.svg) | `check-ignore` matching `/*`, `add` rejected, then the commit |
+| [Later edit](docs/usage/03-edit-tomorrow.svg) | the diff hunk, then `status -sb` still on the machine branch |
+| [Doctor](docs/usage/04-doctor.svg) | one PASS line for each hard check |
+| [Update](docs/usage/05-inherit-system.svg) | the baseline file's contents in the tree, `ls` failing for the default-branch-only file, `status -sb` unchanged |
+| [Timer](docs/usage/06-walk-away.svg) | the diff hunk, the script's commit and push, and `rev-parse` of HEAD matching the remote branch |
 
 ### Auto-commit (optional)
 
-Automatically stage and push changes on a schedule. By default the generated script runs **`git add -u`** (tracked paths only). **`dotfiles-timer install --all`** (Linux: `--all`/`-A`; Windows: `-AddAll`) embeds **`git add -A`** instead, which also picks up **new untracked** paths under `$HOME`.
-For the default `-u` behavior, new dotfiles must still be staged once with `dotfiles add -f`.
+Automatically stage and push changes on a schedule. By default the generated script runs **`git add -u`** (tracked paths only). **`dotfiles-timer install --all`** (Linux: `--all`/`-A`; Windows: `-AddAll`) embeds **`git add -A`**, which also stages untracked files that are not ignored. Paths hidden by the root ignore, including a new file in `$HOME`, still need one `dotfiles add -f` before either form can see them.
 
 Add a `dotfiles-timer` wrapper to your shell profile (same pattern as the `dotfiles` function above) so the install/uninstall/status commands are identical across all your machines:
 
@@ -389,31 +386,21 @@ dotfiles submodule update
 
 ## Managing `.gitignore`
 
-The included `.gitignore` contains:
+The root ignore starts with `/*`, then re-includes one parent at a time so the only trackable tree is `.gitignore` itself and `.local/share/dotfiles/`. Everything else in `$HOME`, hidden or not, stays ignored. That is why the first `dotfiles add` of a home file uses `-f`. `dotfiles status` stays quiet because bootstrap sets `status.showUntrackedFiles` to `no`.
 
-```
-/*
-!/.*
-```
+A normal add also skips the secret names listed at the bottom of that file (`.ssh/id_*`, `.netrc`, `.aws/credentials`, `.env`, `*.pem`, `*.key`). `add -f` overrides the ignore, which is why the warning at the top says to audit before forcing a path.
 
-This ignores everything in `$HOME` except hidden files/dirs (those starting with `.`). This prevents `dotfiles status` from flooding with every file in your home directory.
-
-**To also track a non-hidden directory** (e.g. `~/bin`), add a negation line to `.gitignore`:
-
-```
-/*
-!/.*
-!/bin
-```
-
-Then commit the updated `.gitignore`:
+To track another directory (for example `~/bin`), add a negation to the root `.gitignore` and commit it. A `.gitignore` inside an ignored directory is never read.
 
 ```bash
+# in ~/.gitignore, after the existing chain:
+!/bin/
+!/bin/**
+
 dotfiles add ~/.gitignore
 dotfiles commit -m "Unignore ~/bin"
+dotfiles add ~/bin
 ```
-
-> Note: a `.gitignore` placed inside an ignored subdirectory will not be read by git — the negation must always be added to the root `.gitignore`.
 
 ---
 
