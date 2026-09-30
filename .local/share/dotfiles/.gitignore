@@ -20,3 +20,8 @@
 !githooks-runner/
 
 !completions/
+
+# Usage recordings shown from the README. They stay inside this tree so a
+# checkout does not create a docs directory in $HOME.
+!docs/
+!docs/**

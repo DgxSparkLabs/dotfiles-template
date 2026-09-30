@@ -149,16 +149,21 @@ For the ongoing per-machine workflow, see [Multiple machines](#multiple-machines
 
 You stay on `<machine-name>`. Shared defaults stay on the baseline branch from step 1 (`system`, unless you set `dotfiles.systemRef` to another name). GitHub can keep `main` as its default. `dotfiles update` merges the baseline you named, not that default.
 
-**Track a file once.** The root ignore hides the rest of `$HOME`. `check-ignore` prints the pattern, and `add` without `-f` is rejected. Force the path once, then publish the branch so later pushes have an upstream:
+**After setup**, `~/.local/share` has two directories. `dotfiles/` is the scripts. `dotfiles.git/` is the git database (`HEAD`, `objects`, `refs`). `status -sb` names this machine's branch, and the remote HEAD is still `main`.
+
+![Setup leaves two directories, and the remote default stays main](.local/share/dotfiles/docs/usage/01-new-machine.svg)
+
+**Track a file once.** `ls` and `cat` show `~/.bashrc`. The root ignore hides it, so `add` without `-f` is rejected. After `add -f`, `ls-files` lists the file and you are still on `<machine-name>`. Publish once so later pushes have an upstream:
 
 ```bash
-dotfiles check-ignore -v ~/.bashrc
 dotfiles add -f ~/.bashrc
 dotfiles commit -m "Add bashrc"
 dotfiles push -u origin <machine-name>
 ```
 
-**Edit that file later.** It is already tracked. The diff is the change, and `status -sb` still names your machine branch:
+![bashrc is listed, then tracked](.local/share/dotfiles/docs/usage/02-track-bashrc.svg)
+
+**Edit that file later.** `cat` shows the new lines and the diff is the change. `show --stat` names `.bashrc`. `status -sb` is still your machine branch.
 
 ```bash
 dotfiles diff ~/.bashrc
@@ -167,24 +172,23 @@ dotfiles commit -m "Set EDITOR"
 dotfiles status -sb
 ```
 
-**Take a shared change.** `dotfiles update` merges the baseline onto this branch. A file that exists only on GitHub's default branch stays there. You are still on `<machine-name>`. What belongs on each branch is the [partition contract](#the-partition-contract-system-vs-user).
+![The bashrc diff, then the commit](.local/share/dotfiles/docs/usage/03-edit-tomorrow.svg)
+
+**Check the laptop.** The hooks directory and the cache virtualenv are on disk, and the doctor prints a PASS for each hard check.
+
+![Doctor, after the hooks directory and the cache file](.local/share/dotfiles/docs/usage/04-doctor.svg)
+
+**Take a shared change.** `dotfiles update` merges the baseline. `ls` and `cat` show the file that arrived. `ls` of the file that exists only on the default branch fails. You are still on `<machine-name>`. What belongs on each branch is the [partition contract](#the-partition-contract-system-vs-user).
 
 ```bash
 dotfiles update
 ```
 
-**Leave the desk.** After [the timer](#auto-commit-optional) is installed, its script commits tracked edits and pushes them. It uses the upstream from `push -u` above. A new file still needs one `add -f` before that script can see it.
+![The shared file is on disk; the default-branch file is not](.local/share/dotfiles/docs/usage/05-inherit-system.svg)
 
-The same commands were run on a clean machine. Each recording is the command and git's own output under it:
+**Leave the desk.** The diff is the line you added. The [timer](#auto-commit-optional) script commits it and pushes. `cat` still shows that line, and `log --stat` names `.bashrc`. A new file still needs one `add -f` before that script can see it.
 
-| Recording | What settles it |
-| --- | --- |
-| [Setup](docs/usage/01-new-machine.svg) | `symbolic-ref` of this machine, `dotfiles.systemRef`, and the remote HEAD still `refs/heads/main` |
-| [First add](docs/usage/02-track-bashrc.svg) | `check-ignore` matching `/*`, `add` rejected, then the commit |
-| [Later edit](docs/usage/03-edit-tomorrow.svg) | the diff hunk, then `status -sb` still on the machine branch |
-| [Doctor](docs/usage/04-doctor.svg) | one PASS line for each hard check |
-| [Update](docs/usage/05-inherit-system.svg) | the baseline file's contents in the tree, `ls` failing for the default-branch-only file, `status -sb` unchanged |
-| [Timer](docs/usage/06-walk-away.svg) | the diff hunk, the script's commit and push, and `rev-parse` of HEAD matching the remote branch |
+![The timer commits the bashrc line and pushes it](.local/share/dotfiles/docs/usage/06-walk-away.svg)
 
 ### Auto-commit (optional)
 
