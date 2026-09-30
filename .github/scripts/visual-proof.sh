@@ -177,6 +177,10 @@ story_new_machine() {
   cd "$HOME"
   run "bash bootstrap.sh --repo $REMOTE --branch ci-machine --system-ref system" \
     bash "$TOOL/bootstrap.sh" --repo "$REMOTE" --branch ci-machine --system-ref system
+  run "ls -F ~/.local/share" ls -F "$HOME/.local/share"
+  run "ls -F ~/.local/share/dotfiles.git" ls -F "$HOME/.local/share/dotfiles.git"
+  run "ls -F ~/.local/share/dotfiles/*.sh" ls -F "$HOME/.local/share/dotfiles/"*.sh
+  run "git status -sb" gitdir status -sb
   run "git symbolic-ref HEAD" gitdir symbolic-ref HEAD
   run "git config --get dotfiles.systemRef" gitdir config --get dotfiles.systemRef
   run "git --git-dir=$REMOTE symbolic-ref HEAD" \
@@ -186,46 +190,50 @@ story_new_machine() {
 story_track_bashrc() {
   cd "$HOME"
   printf 'alias ll="ls -la"\n' > .bashrc
+  run "ls -l .bashrc" ls -l .bashrc
+  run "cat .bashrc" cat .bashrc
   run "git check-ignore -v .bashrc" gitdir check-ignore -v .bashrc
   run_fail "git add .bashrc" gitdir add .bashrc
   run "git add -f .bashrc" gitdir add -f .bashrc
   run "git commit -m 'Add bashrc'" gitdir commit -m "Add bashrc"
+  run "git ls-files .bashrc" gitdir ls-files .bashrc
   run "git status -sb" gitdir status -sb
-  run "git log -1 --oneline" gitdir log -1 --oneline
 }
 
 story_edit_tomorrow() {
   cd "$HOME"
   printf '\n# prefer vim\nexport EDITOR=vim\n' >> .bashrc
+  run "cat .bashrc" cat .bashrc
   run_diff "git diff -- .bashrc" gitdir diff -- .bashrc
   grep -F 'export EDITOR=vim' < <(gitdir diff -- .bashrc || true) >/dev/null
   run "git add -u ." gitdir add -u .
   run "git commit -m 'Set EDITOR'" gitdir commit -m "Set EDITOR"
+  run "git show -1 --stat -- .bashrc" gitdir show -1 --stat -- .bashrc
   run "git status -sb" gitdir status -sb
-  run "git log -1 --oneline" gitdir log -1 --oneline
 }
 
 story_doctor() {
   cd "$HOME"
+  run "ls -d ~/.local/share/dotfiles/.githooks" ls -d "$HOME/.local/share/dotfiles/.githooks"
+  run "ls -l ~/.cache/dotfiles/githooks-runner/pyvenv.cfg" \
+    ls -l "$HOME/.cache/dotfiles/githooks-runner/pyvenv.cfg"
   run "dotfiles-doctor --skip-network" bash "$TOOL/dotfiles-doctor.sh" --skip-network
 }
 
 story_inherit() {
   cd "$HOME"
-  run "git --git-dir=$REMOTE show refs/heads/main:DEFAULT_ONLY.txt" \
-    git --git-dir="$REMOTE" show refs/heads/main:DEFAULT_ONLY.txt
   run "git --git-dir=$REMOTE show refs/heads/system:.local/share/dotfiles/SYSTEM_ONLY.txt" \
     git --git-dir="$REMOTE" show refs/heads/system:.local/share/dotfiles/SYSTEM_ONLY.txt
-  run_fail "git --git-dir=$REMOTE cat-file -e refs/heads/main:.local/share/dotfiles/SYSTEM_ONLY.txt" \
-    git --git-dir="$REMOTE" cat-file -e refs/heads/main:.local/share/dotfiles/SYSTEM_ONLY.txt
-  run_fail "git --git-dir=$REMOTE cat-file -e refs/heads/system:DEFAULT_ONLY.txt" \
-    git --git-dir="$REMOTE" cat-file -e refs/heads/system:DEFAULT_ONLY.txt
+  run "git --git-dir=$REMOTE show refs/heads/main:DEFAULT_ONLY.txt" \
+    git --git-dir="$REMOTE" show refs/heads/main:DEFAULT_ONLY.txt
   run "dotfiles-update" bash "$TOOL/dotfiles-update.sh"
+  run "ls -l .local/share/dotfiles/SYSTEM_ONLY.txt" \
+    ls -l "$HOME/.local/share/dotfiles/SYSTEM_ONLY.txt"
   run "cat .local/share/dotfiles/SYSTEM_ONLY.txt" \
     cat "$HOME/.local/share/dotfiles/SYSTEM_ONLY.txt"
-  run_fail "ls -d DEFAULT_ONLY.txt" ls -d "$HOME/DEFAULT_ONLY.txt"
+  run_fail "ls -l DEFAULT_ONLY.txt" ls -l "$HOME/DEFAULT_ONLY.txt"
   run "git status -sb" gitdir status -sb
-  run "git log -1 --format=%s" gitdir log -1 --format=%s
+  run "git log -1 --stat" gitdir log -1 --stat
 }
 
 story_walk_away() {
@@ -268,6 +276,9 @@ story_walk_away() {
     echo "FAIL: timer commit was not pushed"
     exit 1
   fi
+  run "cat .bashrc" cat .bashrc
+  run "git log -1 --stat" gitdir log -1 --stat
+  run "git status -sb" gitdir status -sb
 }
 
 record_movie() {
@@ -370,14 +381,14 @@ Each step is one recording.
 
 Read the command, then the lines under it. A sentence we printed is not the proof.
 
-01-new-machine    symbolic-ref of this machine, dotfiles.systemRef, remote HEAD still main
+01-new-machine    ls of ~/.local/share (dotfiles and dotfiles.git), ls of the git database, ls of the scripts, then the branch refs
 02-layout          ls of the git database HEAD, ls failing in the program directory, ls failing for the legacy path, diff --cached exit 0, check-ignore of the git database
-02-track-bashrc    check-ignore matching /*, add rejected, then add -f and the commit
-03-edit-tomorrow   diff hunk for the edit, then status -sb still on the machine branch
+02-track-bashrc    ls and cat of .bashrc, check-ignore, add rejected, then ls-files shows it tracked
+03-edit-tomorrow   cat of .bashrc and the diff hunk, then show --stat of that file
 03-hooks           git config core.hooksPath, ls of the cache pyvenv.cfg, ls failing for a program .venv
-04-doctor          one PASS line per hard check
-05-inherit-system  show of the file on main and the file on system, update, cat of the system file, ls failing for the main-only file, status -sb
-06-walk-away       diff hunk, the timer script's commit and push, rev-parse of HEAD and of the remote branch printing the same hash
+04-doctor          ls of the hooks directory and the cache pyvenv.cfg, then one PASS line per hard check
+05-inherit-system  ls and cat of the file that arrived, ls failing for the default-branch-only file
+06-walk-away       diff hunk, the script's commit, cat of .bashrc, log --stat, matching rev-parse hashes
 07-timer-where     ls of the state-dir script, grep ExecStart, ls failing inside the git dir and the program dir
 08-uninstall       ls failing for the unit and the state script, ls succeeding for the git database and the program
 
@@ -391,14 +402,14 @@ all() {
   git config --global user.name "CI"
   git config --global --add safe.directory '*'
   prepare_remote
-  record_movie 01-new-machine 'refs/heads/main' 24 "Set up this laptop"
+  record_movie 01-new-machine 'refs/heads/main' 44 "Set up this laptop"
   record 02-layout 'PROOF layout ok'
-  record_movie 02-track-bashrc 'The following paths are ignored' 40 "Track your bashrc"
-  record_movie 03-edit-tomorrow 'export EDITOR=vim' 32 "Edit bashrc the next day"
+  record_movie 02-track-bashrc 'The following paths are ignored' 44 "Track your bashrc"
+  record_movie 03-edit-tomorrow 'export EDITOR=vim' 40 "Edit bashrc the next day"
   record 03-hooks 'PROOF hooks ok'
-  record_movie 04-doctor 'all hard checks PASSED' 36 "Check this laptop"
-  record_movie 05-inherit-system 'No such file' 56 "Inherit the shared baseline"
-  record_movie 06-walk-away '# left the desk' 56 "Walk away; the timer commits"
+  record_movie 04-doctor 'all hard checks PASSED' 48 "Check this laptop"
+  record_movie 05-inherit-system 'No such file' 52 "Inherit the shared baseline"
+  record_movie 06-walk-away '# left the desk' 64 "Walk away; the timer commits"
   record 07-timer-where 'PROOF timer-where ok'
   record 08-uninstall 'PROOF uninstall ok'
   write_index
