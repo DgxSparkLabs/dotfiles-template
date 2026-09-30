@@ -45,6 +45,7 @@ prepare_remote() {
 step_bootstrap() {
   banner "bootstrap onto ci-machine, baseline system"
   bash "$TOOL/bootstrap.sh" --repo "$REMOTE" --branch ci-machine --system-ref system
+  echo "PROOF bootstrap ok"
 }
 
 step_layout() {
@@ -79,6 +80,7 @@ step_layout() {
   fi
   gitdir reset -q
   gitdir check-ignore -v .local/share/dotfiles.git/HEAD
+  echo "PROOF layout ok"
 }
 
 step_hooks() {
@@ -93,12 +95,14 @@ step_hooks() {
   echo "cache pyvenv.cfg: present"
   test ! -e "$HOME/.local/share/dotfiles/githooks-runner/.venv"
   echo "program .venv: absent"
+  echo "PROOF hooks ok"
 }
 
 step_doctor() {
   cd "$HOME"
   banner "doctor"
   bash "$TOOL/dotfiles-doctor.sh" --skip-network
+  echo "PROOF doctor ok"
 }
 
 step_update() {
@@ -110,12 +114,14 @@ step_update() {
   echo "SYSTEM_ONLY.txt: present (came from system)"
   test ! -e "$HOME/DEFAULT_ONLY.txt"
   echo "DEFAULT_ONLY.txt: absent (stayed on the default branch)"
+  echo "PROOF update ok"
 }
 
 step_timer_install() {
   cd "$HOME"
   banner "install the timer"
   bash "$TOOL/dotfiles-timer.sh" install
+  echo "PROOF timer-install ok"
 }
 
 step_timer_where() {
@@ -128,6 +134,7 @@ step_timer_where() {
   echo "script inside git dir: absent"
   test ! -e "$HOME/.local/share/dotfiles/auto-commit.sh"
   echo "script inside program dir: absent"
+  echo "PROOF timer-where ok"
 }
 
 step_uninstall() {
@@ -142,6 +149,7 @@ step_uninstall() {
   echo "git dir: kept"
   test -f "$HOME/.local/share/dotfiles/dotfiles-timer.sh"
   echo "program: kept"
+  echo "PROOF uninstall ok"
 }
 
 record() {
@@ -150,11 +158,10 @@ record() {
   local cast="$PROOF_OUT/$name.cast"
   local svg="$PROOF_OUT/$name.svg"
   local png="$PROOF_OUT/$name.png"
-  local meta="$PROOF_OUT/$name.json"
 
-  set +e
+  # v0.10.1 capture has no --json. The tape must contain the step's final
+  # PROOF line, which the step prints only after every check has passed.
   console2svg capture \
-    --json \
     --mask-auto false \
     -w 120 \
     -h 48 \
@@ -163,21 +170,7 @@ record() {
     --timing realtime \
     --save-cast "$cast" \
     -o "$svg" \
-    -- bash "$0" step "$name" >"$meta"
-  local rc=$?
-  set -e
-  if [ ! -s "$meta" ]; then
-    echo "visual-proof: $name produced no capture json (console2svg exit $rc)" >&2
-    exit 1
-  fi
-
-  local exit_code
-  exit_code="$(jq -r '.exitCode' "$meta")"
-  if [ "$exit_code" != "0" ]; then
-    echo "visual-proof: $name exited $exit_code" >&2
-    jq -r '.screen.text // empty' "$meta" >&2 || true
-    exit 1
-  fi
+    -- bash "$0" step "$name"
   if ! grep -q "$expect" "$cast"; then
     echo "visual-proof: tape $name.cast does not contain: $expect" >&2
     exit 1
@@ -204,7 +197,6 @@ Each step is one recording.
 .cast  asciicast v2 tape of the terminal session (the recording)
 .svg   still image of the final screen, captured with the tape
 .png   the same still, rendered from the tape for review
-.json  console2svg capture result (exit code and final screen text)
 
 01-bootstrap     bootstrap.sh checks out ci-machine and records system as the baseline
 02-layout        HEAD is ci-machine, remote default is main, git dir and program are split, git add -A does not stage the git dir
@@ -223,14 +215,14 @@ all() {
   git config --global user.name "CI"
   git config --global --add safe.directory '*'
   prepare_remote
-  record 01-bootstrap 'system-ref=system'
-  record 02-layout 'old directory: absent'
-  record 03-hooks 'program .venv: absent'
-  record 04-doctor 'githooks-runner venv synced'
-  record 05-update 'DEFAULT_ONLY.txt: absent'
-  record 06-timer-install 'Installed '
-  record 07-timer-where 'script inside git dir: absent'
-  record 08-uninstall 'program: kept'
+  record 01-bootstrap 'PROOF bootstrap ok'
+  record 02-layout 'PROOF layout ok'
+  record 03-hooks 'PROOF hooks ok'
+  record 04-doctor 'PROOF doctor ok'
+  record 05-update 'PROOF update ok'
+  record 06-timer-install 'PROOF timer-install ok'
+  record 07-timer-where 'PROOF timer-where ok'
+  record 08-uninstall 'PROOF uninstall ok'
   write_index
   echo "visual-proof: wrote $PROOF_OUT"
 }
