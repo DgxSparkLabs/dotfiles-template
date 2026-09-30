@@ -29,134 +29,152 @@
 <defs>
 <g id="c2r0" class="c2 c" xml:space="preserve">
 <rect width="924" height="18" id="c2e0" fill="#0c0c0c"/>
+<text class="aa" y="14" textLength="764.4">$ bash bootstrap.sh --repo /tmp/dotfiles-remote.git --branch ci-machine --system-ref system</text>
 </g>
 <g id="c2r1" class="c2 c" xml:space="preserve">
 <use href="#c2e0"/>
-<text class="aa" y="14" textLength="218.4">--- Set up this laptop ---</text>
 </g>
 <g id="c2r2" class="c2 c" xml:space="preserve">
 <use href="#c2e0"/>
-<text class="aa" y="14" textLength="218.4">Machine branch: ci-machine</text>
+<text class="aa" y="14" textLength="663.6">bootstrap.sh: repo=/tmp/dotfiles-remote.git branch=ci-machine system-ref=system</text>
 </g>
 <g id="c2r3" class="c2 c" xml:space="preserve">
 <use href="#c2e0"/>
-<text class="aa" y="14" textLength="193.2">Shared baseline: system</text>
-</g>
-<g id="c2r4" class="c2 c" xml:space="preserve">
-<use href="#c2e0"/>
-<text class="aa" y="14" textLength="319.2">GitHub&apos;s default branch is left alone.</text>
-</g>
-<g id="c2r5" class="c2 c" xml:space="preserve">
-<use href="#c2e0"/>
-<text class="aa" y="14" textLength="663.6">bootstrap.sh: repo=/tmp/dotfiles-remote.git branch=ci-machine system-ref=system</text>
-</g>
-<g id="c2r6" class="c2 c" xml:space="preserve">
-<use href="#c2e0"/>
 <text class="aa" y="14" textLength="604.8">Cloning into bare repository &apos;/home/runner/.local/share/dotfiles.git&apos;...</text>
 </g>
-<g id="c2r7" class="c2 c"><use href="#c2r0"/>
+<g id="c2r4" class="c2 c"><use href="#c2r1"/>
 <g xml:space="preserve">
 <rect width="42" height="18" id="c2e1" fill="#0c0c0c" stroke="#0c0c0c" stroke-width="2" vector-effect="non-scaling-stroke"/>
 <text class="aa" y="14" textLength="42">done.</text>
 </g>
 </g>
-<g id="c2r8" class="c2 c" xml:space="preserve">
+<g id="c2r5" class="c2 c" xml:space="preserve">
 <use href="#c2e0"/>
-<text class="aa" y="14" textLength="369.6">You are on ci-machine. Updates merge system.</text>
+<text class="aa" y="14" textLength="193.2">$ git symbolic-ref HEAD</text>
+</g>
+<g id="c2r6" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" y="14" textLength="176.4">refs/heads/ci-machine</text>
+</g>
+<g id="c2r7" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" y="14" textLength="310.8">$ git config --get dotfiles.systemRef</text>
+</g>
+<g id="c2r8" class="c2 c"><use href="#c2r1"/>
+<g xml:space="preserve">
+<rect width="50.4" height="18" id="c2e2" fill="#0c0c0c" stroke="#0c0c0c" stroke-width="2" vector-effect="non-scaling-stroke"/>
+<text class="aa" y="14" textLength="50.4">system</text>
+</g>
+</g>
+<g id="c2r9" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" y="14" textLength="487.2">$ git --git-dir=/tmp/dotfiles-remote.git symbolic-ref HEAD</text>
+</g>
+<g id="c2r10" class="c2 c"><use href="#c2r1"/>
+<g xml:space="preserve">
+<rect width="126" height="18" id="c2e3" fill="#0c0c0c" stroke="#0c0c0c" stroke-width="2" vector-effect="non-scaling-stroke"/>
+<text class="aa" y="14" textLength="126">refs/heads/main</text>
+</g>
 </g>
 </defs>
 <g transform="translate(9 61)">
 <g>
 <use href="#c2r0" display="inline"/>
-<use href="#c2r1" y="18" display="inline"/>
-<use href="#c2r0" y="36" display="none">
-<animate attributeName="display" values="inline;none" keyTimes="0;0.110165" dur="5.507s" calcMode="discrete" repeatCount="indefinite"/>
+<use href="#c2r1" y="18" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.009848" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
 </use>
-<use href="#c2r2" y="36" display="none">
-<animate attributeName="display" values="none;inline" keyTimes="0;0.110165" dur="5.507s" calcMode="discrete" repeatCount="indefinite"/>
+<use href="#c2r2" y="18" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.009848" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
 </use>
-<use href="#c2r0" y="54" display="none">
-<animate attributeName="display" values="inline;none" keyTimes="0;0.219454" dur="5.507s" calcMode="discrete" repeatCount="indefinite"/>
+<use href="#c2r1" y="36" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.11968" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
 </use>
-<use href="#c2r3" y="54" display="none">
-<animate attributeName="display" values="none;inline" keyTimes="0;0.219454" dur="5.507s" calcMode="discrete" repeatCount="indefinite"/>
+<use href="#c2r3" y="36" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.11968" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
 </use>
-<use href="#c2r0" y="72" display="none">
-<animate attributeName="display" values="inline;none" keyTimes="0;0.328744" dur="5.507s" calcMode="discrete" repeatCount="indefinite"/>
+<use href="#c2r1" y="54" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.229505" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
 </use>
-<use href="#c2r4" y="72" display="none">
-<animate attributeName="display" values="none;inline" keyTimes="0;0.328744" dur="5.507s" calcMode="discrete" repeatCount="indefinite"/>
+<use href="#c2r4" y="54" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.229505" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
 </use>
-<use href="#c2r0" y="90" display="none">
-<animate attributeName="display" values="inline;none" keyTimes="0;0.444188" dur="5.507s" calcMode="discrete" repeatCount="indefinite"/>
+<use href="#c2r1" y="72" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.340512" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
 </use>
-<use href="#c2r5" y="90" display="none">
-<animate attributeName="display" values="none;inline" keyTimes="0;0.444188" dur="5.507s" calcMode="discrete" repeatCount="indefinite"/>
+<use href="#c2r5" y="72" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.340512" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
 </use>
-<use href="#c2r0" y="108" display="none">
-<animate attributeName="display" values="inline;none" keyTimes="0;0.508046" dur="5.507s" calcMode="discrete" repeatCount="indefinite"/>
+<use href="#c2r1" y="90" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.340512" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
 </use>
-<use href="#c2r6" y="108" display="none">
-<animate attributeName="display" values="none;inline" keyTimes="0;0.508046" dur="5.507s" calcMode="discrete" repeatCount="indefinite"/>
+<use href="#c2r6" y="90" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.340512" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
 </use>
-<use href="#c2r0" y="126" display="none">
-<animate attributeName="display" values="inline;none" keyTimes="0;0.57193" dur="5.507s" calcMode="discrete" repeatCount="indefinite"/>
+<use href="#c2r1" y="108" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.451398" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
 </use>
-<use href="#c2r7" y="126" display="none">
-<animate attributeName="display" values="none;inline" keyTimes="0;0.57193" dur="5.507s" calcMode="discrete" repeatCount="indefinite"/>
+<use href="#c2r7" y="108" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.451398" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
 </use>
-<use href="#c2r0" y="144" display="none">
-<animate attributeName="display" values="inline;none" keyTimes="0;0.636829" dur="5.507s" calcMode="discrete" repeatCount="indefinite"/>
+<use href="#c2r1" y="126" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.451398" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
 </use>
-<use href="#c2r8" y="144" display="none">
-<animate attributeName="display" values="none;inline" keyTimes="0;0.636829" dur="5.507s" calcMode="discrete" repeatCount="indefinite"/>
+<use href="#c2r8" y="126" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.451398" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
 </use>
-<use href="#c2r0" y="162" display="inline"/>
-<use href="#c2r0" y="180" display="inline"/>
-<use href="#c2r0" y="198" display="inline"/>
-<use href="#c2r0" y="216" display="inline"/>
-<use href="#c2r0" y="234" display="inline"/>
-<use href="#c2r0" y="252" display="inline"/>
-<use href="#c2r0" y="270" display="inline"/>
-<use href="#c2r0" y="288" display="inline"/>
-<use href="#c2r0" y="306" display="inline"/>
-<use href="#c2r0" y="324" display="inline"/>
-<use href="#c2r0" y="342" display="inline"/>
-<use href="#c2r0" y="360" display="inline"/>
-<use href="#c2r0" y="378" display="inline"/>
-<use href="#c2r0" y="396" display="inline"/>
-<use href="#c2r0" y="414" display="inline"/>
+<use href="#c2r1" y="144" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.562312" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r9" y="144" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.562312" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r1" y="162" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.562312" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r10" y="162" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.562312" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r1" y="180" display="inline"/>
+<use href="#c2r1" y="198" display="inline"/>
+<use href="#c2r1" y="216" display="inline"/>
+<use href="#c2r1" y="234" display="inline"/>
+<use href="#c2r1" y="252" display="inline"/>
+<use href="#c2r1" y="270" display="inline"/>
+<use href="#c2r1" y="288" display="inline"/>
+<use href="#c2r1" y="306" display="inline"/>
+<use href="#c2r1" y="324" display="inline"/>
+<use href="#c2r1" y="342" display="inline"/>
+<use href="#c2r1" y="360" display="inline"/>
+<use href="#c2r1" y="378" display="inline"/>
+<use href="#c2r1" y="396" display="inline"/>
+<use href="#c2r1" y="414" display="inline"/>
 <g display="none">
-<animate attributeName="display" values="inline;none" keyTimes="0;0.110165" dur="5.507s" calcMode="discrete" repeatCount="indefinite"/>
+<animate attributeName="display" values="inline;none" keyTimes="0;0.009848" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
+<rect class="u" y="18" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
+</g>
+<g display="none">
+<animate attributeName="display" values="none;inline;none" keyTimes="0;0.009848;0.11968" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
 <rect class="u" y="36" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
 </g>
 <g display="none">
-<animate attributeName="display" values="none;inline;none" keyTimes="0;0.110165;0.219454" dur="5.507s" calcMode="discrete" repeatCount="indefinite"/>
+<animate attributeName="display" values="none;inline;none" keyTimes="0;0.11968;0.229505" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
 <rect class="u" y="54" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
 </g>
 <g display="none">
-<animate attributeName="display" values="none;inline;none" keyTimes="0;0.219454;0.328744" dur="5.507s" calcMode="discrete" repeatCount="indefinite"/>
+<animate attributeName="display" values="none;inline;none" keyTimes="0;0.229505;0.340512" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
 <rect class="u" y="72" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
 </g>
 <g display="none">
-<animate attributeName="display" values="none;inline;none" keyTimes="0;0.328744;0.444188" dur="5.507s" calcMode="discrete" repeatCount="indefinite"/>
-<rect class="u" y="90" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
-</g>
-<g display="none">
-<animate attributeName="display" values="none;inline;none" keyTimes="0;0.444188;0.508046" dur="5.507s" calcMode="discrete" repeatCount="indefinite"/>
+<animate attributeName="display" values="none;inline;none" keyTimes="0;0.340512;0.451398" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
 <rect class="u" y="108" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
 </g>
 <g display="none">
-<animate attributeName="display" values="none;inline;none" keyTimes="0;0.508046;0.57193" dur="5.507s" calcMode="discrete" repeatCount="indefinite"/>
-<rect class="u" y="126" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
-</g>
-<g display="none">
-<animate attributeName="display" values="none;inline;none" keyTimes="0;0.57193;0.636829" dur="5.507s" calcMode="discrete" repeatCount="indefinite"/>
+<animate attributeName="display" values="none;inline;none" keyTimes="0;0.451398;0.562312" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
 <rect class="u" y="144" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
 </g>
 <g display="none">
-<animate attributeName="display" values="none;inline" keyTimes="0;0.636829" dur="5.507s" calcMode="discrete" repeatCount="indefinite"/>
-<rect class="u" y="162" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
+<animate attributeName="display" values="none;inline" keyTimes="0;0.562312" dur="4.569s" calcMode="discrete" repeatCount="indefinite"/>
+<rect class="u" y="180" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
 </g>
 </g>
 </g>
