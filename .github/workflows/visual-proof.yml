@@ -1,0 +1,60 @@
+name: Visual proof
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  proof:
+    name: Record console2svg tapes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config --global user.email "ci@github-actions"
+          git config --global user.name "CI"
+
+      - name: Export XDG_RUNTIME_DIR
+        run: echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install console2svg
+        uses: arika0093/console2svg@main
+
+      - name: Install SVG rasterizer
+        run: sudo apt-get update && sudo apt-get install -y librsvg2-bin
+
+      - name: Record step tapes and stills
+        env:
+          PROOF_OUT: ${{ github.workspace }}/proof
+          REMOTE: /tmp/dotfiles-remote.git
+        run: bash .github/scripts/visual-proof.sh all
+
+      - name: Summarize the recordings
+        if: always()
+        run: |
+          if [ -f proof/README.md ]; then
+            {
+              echo "## Visual proof"
+              echo
+              echo "Open \`README.md\` in the \`visual-proof\` artifact. Each file name is the check. The \`.svg\` is the picture, the \`.cast\` is the tape, and the \`.png\` is a still of that tape. A picture with no \`Result: PASS\` line did not pass."
+              echo
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload tapes and stills
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-proof
+          path: proof/
+          if-no-files-found: error

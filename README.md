@@ -2,7 +2,7 @@
 
 Manage dotfiles across machines using a bare git repository. No symlinks, no extra tools — just git.
 
-The trick: a bare repo stored at `~/.dotfiles` with `$HOME` as its work-tree, accessed via a short alias.
+The trick: a bare repo stored at `~/.local/share/dotfiles.git` with `$HOME` as its work-tree, accessed via a short alias. The program itself is checked out at `~/.local/share/dotfiles/`. Generated timer scripts and logs live in `~/.local/state/dotfiles/`. The hook virtualenv lives in `~/.cache/dotfiles/githooks-runner/`. These paths are the same on Linux, macOS, and Windows. `git clean -fdx` from `$HOME` deletes ignored files, including the bare repo. Do not run it on an install.
 
 > `**<placeholder>**` — anything in angle brackets is something you must replace with your own value before running the command.
 
@@ -17,13 +17,13 @@ Add one of these to your shell profile and use `dotfiles` everywhere you'd use `
 **Bash / Zsh** (`~/.bashrc` or `~/.zshrc`):
 
 ```bash
-alias dotfiles='git --git-dir=$HOME/.dotfiles/ --work-tree=$HOME'
+alias dotfiles='git --git-dir=$HOME/.local/share/dotfiles.git/ --work-tree=$HOME'
 ```
 
 **PowerShell** (`$PROFILE`):
 
 ```powershell
-function dotfiles { git --git-dir="$HOME/.dotfiles/" --work-tree="$HOME" @args }
+function dotfiles { git --git-dir="$HOME/.local/share/dotfiles.git/" --work-tree="$HOME" @args }
 ```
 
 ---
@@ -80,12 +80,12 @@ git push origin "HEAD:$SYSTEM_REF"
 
 ```bash
 SYSTEM_REF=system   # or master, or any other valid branch name
-git clone --bare git@github.com:<YOU>/dotfiles.git $HOME/.dotfiles
+git clone --bare git@github.com:<YOU>/dotfiles.git $HOME/.local/share/dotfiles.git
 dotfiles config --local status.showUntrackedFiles no
 dotfiles config --local dotfiles.systemRef "$SYSTEM_REF"
 
 # Populate $HOME from the baseline branch
-dotfiles checkout "$SYSTEM_REF" -- .gitignore .dotfiles/
+dotfiles checkout "$SYSTEM_REF" -- .gitignore .local/share/dotfiles/
 dotfiles add -u . && dotfiles commit -m "Init dotfiles"
 ```
 
@@ -134,10 +134,12 @@ dotfiles push -u origin WSL
 ### 4. Add your dotfiles
 
 ```bash
-dotfiles add ~/.bashrc
+dotfiles add -f ~/.bashrc
 dotfiles commit -m "Add bashrc"
 dotfiles push
 ```
+
+The root ignore hides the rest of `$HOME`, so the first add of a new file uses `-f`. After that, `dotfiles add -u` and the timer see it.
 
 For the ongoing per-machine workflow, see [Multiple machines](#multiple-machines).
 
@@ -145,34 +147,50 @@ For the ongoing per-machine workflow, see [Multiple machines](#multiple-machines
 
 ## Daily use
 
-You're always on your machine's branch (`<machine-name>`). Routine changes commit and push there:
+You stay on your machine branch. Shared defaults stay on the baseline branch from step 1 (`system`, unless you set `dotfiles.systemRef` to another name). GitHub can keep `main` as its default. [`dotfiles-update`](#system-updates-dotfiles-update) merges the baseline you named.
 
-```bash
-dotfiles status
-dotfiles add ~/.config/someapp/config
-dotfiles commit -m "Add someapp config"
-dotfiles push                 # pushes to <machine-name> on origin
-```
+Each picture states the check, the output that means it worked, the commands, and a `Result: PASS` line. The laptop in the pictures is on branch `laptop`. The recording ran on a GitHub-hosted runner, so home is `/home/runner` and `dotfiles push` shows a local remote path. The rest of the checks, including where the timer script and the hook virtualenv live, are in the [visual proof](.local/share/dotfiles/docs/proof/README.md).
 
-For changes you want every machine to inherit, see [Multiple machines](#multiple-machines) — those go on the baseline branch (`dotfiles.systemRef`).
+**Two directories.** `dotfiles/` is the scripts. `dotfiles.git/` is the git database.
+
+![The program directory and the git database are both present, and this machine is on branch laptop.](.local/share/dotfiles/docs/proof/program-directory-and-git-database.svg)
+
+**Track `~/.bashrc`.** The root ignore hides a new file until `dotfiles add -f`.
+
+![A new ~/.bashrc is ignored until add -f, then the commit and push stay on branch laptop.](.local/share/dotfiles/docs/proof/track-home-bashrc.svg)
+
+**Save an edit.** `dotfiles add -u` commits the change. The branch stays `laptop`.
+
+![A later edit of the tracked ~/.bashrc is committed with add -u, and the branch stays laptop.](.local/share/dotfiles/docs/proof/commit-bashrc-edit.svg)
+
+**Check the laptop.** [`dotfiles-doctor --skip-network`](#health-check-dotfiles-doctor-optional) prints a PASS for each hard check.
+
+![dotfiles-doctor passes every hard check when the network check is skipped.](.local/share/dotfiles/docs/proof/doctor-hard-checks.svg)
+
+**Take the baseline.** `dotfiles-update` merges `system`. The file that exists only on `main` stays out of this home. What belongs on each branch is the [partition contract](#the-partition-contract-system-vs-user).
+
+![dotfiles-update merges branch system onto laptop and does not bring the file that exists only on main.](.local/share/dotfiles/docs/proof/update-merges-system-branch.svg)
+
+**Leave the desk.** The [timer](#auto-commit-optional) script commits the new line and pushes it. A new file still needs one `dotfiles add -f` before that script can see it.
+
+![The generated timer script commits a tracked ~/.bashrc edit and pushes it on branch laptop.](.local/share/dotfiles/docs/proof/timer-script-commits-bashrc.svg)
 
 ### Auto-commit (optional)
 
-Automatically stage and push changes on a schedule. By default the generated script runs **`git add -u`** (tracked paths only). **`dotfiles-timer install --all`** (Linux: `--all`/`-A`; Windows: `-AddAll`) embeds **`git add -A`** instead, which also picks up **new untracked** paths under `$HOME`.
-For the default `-u` behavior, new dotfiles must still be staged once with `dotfiles add`.
+Automatically stage and push changes on a schedule. By default the generated script runs **`git add -u`** (tracked paths only). **`dotfiles-timer install --all`** (Linux: `--all`/`-A`; Windows: `-AddAll`) embeds **`git add -A`**, which also stages untracked files that are not ignored. Paths hidden by the root ignore, including a new file in `$HOME`, still need one `dotfiles add -f` before either form can see them.
 
 Add a `dotfiles-timer` wrapper to your shell profile (same pattern as the `dotfiles` function above) so the install/uninstall/status commands are identical across all your machines:
 
 **Bash / Zsh** (`~/.bashrc` or `~/.zshrc`):
 
 ```bash
-alias dotfiles-timer='bash $HOME/.dotfiles/dotfiles-timer.sh'
+alias dotfiles-timer='bash $HOME/.local/share/dotfiles/dotfiles-timer.sh'
 ```
 
 **PowerShell** (`$PROFILE`):
 
 ```powershell
-function dotfiles-timer { pwsh "$HOME\.dotfiles\dotfiles-timer.ps1" @args }
+function dotfiles-timer { pwsh "$HOME/.local/share/dotfiles/dotfiles-timer.ps1" @args }
 ```
 
 Then on any platform:
@@ -193,36 +211,37 @@ Behavior per platform:
 
 - **Linux** — installs a systemd user timer that runs every minute.
 - **Windows admin shell** — registers a Task Scheduler task. Survives logoff, runs as your user with limited rights.
-- **Windows non-admin shell** — drops a hidden VBS launcher in your Startup folder that fires a detached `pwsh` while-loop at each logon. No admin required, no console window flash (the VBS host is windowless). Errors log to `%TEMP%\dotfiles-auto-commit.log`.
+- **Windows non-admin shell** — drops a hidden VBS launcher in your Startup folder that fires a detached `pwsh` while-loop at each logon. No admin required, no console window flash (the VBS host is windowless). Errors log to `~/.local/state/dotfiles/auto-commit.log`.
 
-The commit script (and the loop script, in Windows user mode) lives inside `~/.dotfiles/`, keeping both out of your work-tree and off `dotfiles status`.
+The commit script (and the loop script, in Windows user mode) lives in `~/.local/state/dotfiles/`, which is gitignored, so both stay off `dotfiles status`. systemd user units stay in `~/.config/systemd/user/` (a user manager started with `XDG_CONFIG_HOME` set will not load them). The macOS plist stays in `~/Library/LaunchAgents/`. The Windows launcher stays in the Startup folder.
 
 ### Git hooks (optional)
 
-Client-side hooks run as **POSIX `#!/bin/sh` stubs** under `~/.dotfiles/.githooks/` (tracked in this repo as **`.dotfiles/.githooks/`**). Each stub executes the same **Python dispatcher** via **`uv run`** — no `pre-commit` framework dependency.
+Client-side hooks run as **POSIX `#!/bin/sh` stubs** under `~/.local/share/dotfiles/.githooks/` (tracked in this repo as **`.local/share/dotfiles/.githooks/`**). Each stub executes the same **Python dispatcher** via **`uv run`** — no `pre-commit` framework dependency.
 
 **Prerequisites**
 
-- **[uv](https://docs.astral.sh/uv/)** on `PATH` wherever Git runs hooks (terminal **and** GUI clients often inherit a minimal PATH — if hooks fail to find `uv`, fix PATH or edit the POSIX stubs under `.dotfiles/.githooks/` to invoke a full path to `uv`).
+- **[uv](https://docs.astral.sh/uv/)** on `PATH` wherever Git runs hooks (terminal **and** GUI clients often inherit a minimal PATH — if hooks fail to find `uv`, fix PATH or edit the POSIX stubs under `.local/share/dotfiles/.githooks/` to invoke a full path to `uv`).
 - **Linux / macOS**: normal system `sh`.
 - **Windows**: **Git for Windows** (hooks are executed with **`sh.exe`** from Git’s MSYS environment).
 
-The hook launcher scripts under **`.dotfiles/.githooks/`** are **tracked in this repo** (no separate generator step). After your work-tree contains `.dotfiles/`, sync the Python package once:
+The hook launcher scripts under **`.local/share/dotfiles/.githooks/`** are **tracked in this repo** (no separate generator step). After your work-tree contains `.local/share/dotfiles/`, sync the Python package once. The virtualenv is not created inside the project:
 
 ```bash
-uv sync --project ~/.dotfiles/githooks-runner
+export UV_PROJECT_ENVIRONMENT="$HOME/.cache/dotfiles/githooks-runner"
+uv sync --project "$HOME/.local/share/dotfiles/githooks-runner"
 ```
 
-**Point the bare repo at the hooks directory** (required — hooks live outside `$GIT_DIR/hooks`):
+**Point the bare repo at the hooks directory** (required — hooks live in the checkout, outside the git dir):
 
 ```bash
-git --git-dir "$HOME/.dotfiles" config core.hooksPath "$HOME/.dotfiles/.githooks"
+git --git-dir "$HOME/.local/share/dotfiles.git" config core.hooksPath "$HOME/.local/share/dotfiles/.githooks"
 ```
 
-You can also use a path **relative to `$GIT_DIR`** if you prefer; verify with:
+Verify with:
 
 ```bash
-git --git-dir "$HOME/.dotfiles" config --show-origin core.hooksPath
+git --git-dir "$HOME/.local/share/dotfiles.git" config --show-origin core.hooksPath
 ```
 
 **Optional logging**
@@ -233,14 +252,12 @@ Set `DOTFILES_GITHOOKS_VERBOSE=1` to print a line to stderr for every hook invoc
 
 Keep machine-specific identity — your email, signing key — out of the common config so it can vary per machine while applying to **all** git work. The common/base `~/.gitconfig` ends with a plain `[include]` of an untracked, per-machine `~/.gitconfig.local`; each machine sets its own email there (work email on the work laptop, personal at home).
 
-The repo ships `.dotfiles/gitconfig.example` as the common base. Copy it to `~/.gitconfig`, then create the per-machine `~/.gitconfig.local`:
+The repo ships `.local/share/dotfiles/gitconfig.example` as the common base. Copy it to `~/.gitconfig`, then create the per-machine `~/.gitconfig.local`:
 
 **Bash / Zsh:**
 
 ```bash
-cp ~/.dotfiles-worktree-or-clone/.dotfiles/gitconfig.example ~/.gitconfig
-# (or, once .dotfiles/ is checked out into $HOME:)
-cp ~/.dotfiles/gitconfig.example ~/.gitconfig
+cp ~/.local/share/dotfiles/gitconfig.example ~/.gitconfig
 
 printf '[user]\n\temail = <you@example.com>\n' > ~/.gitconfig.local
 ```
@@ -248,7 +265,7 @@ printf '[user]\n\temail = <you@example.com>\n' > ~/.gitconfig.local
 **PowerShell:**
 
 ```powershell
-Copy-Item "$HOME\.dotfiles\gitconfig.example" "$HOME\.gitconfig"
+Copy-Item "$HOME/.local/share/dotfiles/gitconfig.example" "$HOME/.gitconfig"
 "[user]`n`temail = <you@example.com>" | Set-Content "$HOME\.gitconfig.local"
 ```
 
@@ -267,7 +284,7 @@ git config --get user.email      # -> <you@example.com>
 Checks performed:
 
 - **uv** is on `PATH`
-- `core.hooksPath` == `~/.dotfiles/.githooks`
+- `core.hooksPath` == `~/.local/share/dotfiles/.githooks`
 - `status.showUntrackedFiles` == `no`
 - the `githooks-runner` venv is synced
 - the work-tree is clean (no uncommitted tracked changes)
@@ -282,13 +299,13 @@ Add a `dotfiles-doctor` wrapper to your shell profile (same pattern as the other
 **Bash / Zsh** (`~/.bashrc` or `~/.zshrc`):
 
 ```bash
-alias dotfiles-doctor='bash $HOME/.dotfiles/dotfiles-doctor.sh'
+alias dotfiles-doctor='bash $HOME/.local/share/dotfiles/dotfiles-doctor.sh'
 ```
 
 **PowerShell** (`$PROFILE`):
 
 ```powershell
-function dotfiles-doctor { pwsh "$HOME\.dotfiles\dotfiles-doctor.ps1" @args }
+function dotfiles-doctor { pwsh "$HOME/.local/share/dotfiles/dotfiles-doctor.ps1" @args }
 ```
 
 Then on any platform:
@@ -299,7 +316,7 @@ dotfiles-doctor --skip-network   # Bash/Zsh: omit the network/SSH reachability c
 dotfiles-doctor -SkipNetwork     # PowerShell: omit the network/SSH reachability check
 ```
 
-The git dir and work-tree default to `$HOME/.dotfiles` and `$HOME`. Override them with arguments if your setup differs:
+The git dir defaults to `$HOME/.local/share/dotfiles.git` and the work-tree to `$HOME`. The expected program directory is `$WORK_TREE/.local/share/dotfiles`. State and the uv cache stay under `$HOME`. Override the git dir and work-tree with arguments if your setup differs:
 
 ```text
 dotfiles-doctor --git-dir /path/to/repo --work-tree /path/to/home   # Bash/Zsh
@@ -310,27 +327,27 @@ Use `--skip-network` / `-SkipNetwork` when offline or when the SSH agent is lock
 
 ### Shell completion (optional)
 
-Tab-completion for the wrappers lives in `.dotfiles/completions/`. `dotfiles` completes exactly like `git`; `dotfiles-timer` completes its verbs (`install`, `reinstall`, `enable`, `disable`, `start`, `stop`, `status`, `logs`, `uninstall`, `remove`) and the add-all flags (`--all`/`-A` on Linux, `-AddAll` on Windows); `dotfiles-update` completes `--auto` and `dotfiles-doctor` completes `--skip-network`.
+Tab-completion for the wrappers lives in `.local/share/dotfiles/completions/`. `dotfiles` completes exactly like `git`; `dotfiles-timer` completes its verbs (`install`, `reinstall`, `enable`, `disable`, `start`, `stop`, `status`, `logs`, `uninstall`, `remove`) and the add-all flags (`--all`/`-A` on Linux, `-AddAll` on Windows); `dotfiles-update` completes `--auto` and `dotfiles-doctor` completes `--skip-network`.
 
 Source the file for your shell **after** defining the wrapper alias/function:
 
 **Bash** (`~/.bashrc`):
 
 ```bash
-source "$HOME/.dotfiles/completions/dotfiles.bash"
+source "$HOME/.local/share/dotfiles/completions/dotfiles.bash"
 ```
 
 **Zsh** (`~/.zshrc`, after `compinit`):
 
 ```zsh
-fpath+=("$HOME/.dotfiles/completions")
-source "$HOME/.dotfiles/completions/dotfiles.zsh"
+fpath+=("$HOME/.local/share/dotfiles/completions")
+source "$HOME/.local/share/dotfiles/completions/dotfiles.zsh"
 ```
 
 **PowerShell** (`$PROFILE`):
 
 ```powershell
-. "$HOME\.dotfiles\completions\dotfiles.ps1"
+. "$HOME/.local/share/dotfiles/completions/dotfiles.ps1"
 ```
 
 > **Prereq for `dotfiles` git completion.** `dotfiles` reuses git's own completion: bash needs git's bash-completion script loaded (so `__git_complete`/`__git_main` exist); zsh needs `_git`; PowerShell needs git's completer (e.g. [posh-git](https://github.com/dahlbyk/posh-git) or recent Git for Windows). If that script isn't present the `dotfiles` completion silently no-ops — the timer/update/doctor completions still work.
@@ -358,44 +375,34 @@ dotfiles submodule update
 
 ## Managing `.gitignore`
 
-The included `.gitignore` contains:
+The root ignore starts with `/*`, then re-includes one parent at a time so the only trackable tree is `.gitignore` itself and `.local/share/dotfiles/`. Everything else in `$HOME`, hidden or not, stays ignored. That is why the first `dotfiles add` of a home file uses `-f`. `dotfiles status` stays quiet because bootstrap sets `status.showUntrackedFiles` to `no`.
 
-```
-/*
-!/.*
-```
+A normal add also skips the secret names listed at the bottom of that file (`.ssh/id_*`, `.netrc`, `.aws/credentials`, `.env`, `*.pem`, `*.key`). `add -f` overrides the ignore, which is why the warning at the top says to audit before forcing a path.
 
-This ignores everything in `$HOME` except hidden files/dirs (those starting with `.`). This prevents `dotfiles status` from flooding with every file in your home directory.
-
-**To also track a non-hidden directory** (e.g. `~/bin`), add a negation line to `.gitignore`:
-
-```
-/*
-!/.*
-!/bin
-```
-
-Then commit the updated `.gitignore`:
+To track another directory (for example `~/bin`), add a negation to the root `.gitignore` and commit it. A `.gitignore` inside an ignored directory is never read.
 
 ```bash
+# in ~/.gitignore, after the existing chain:
+!/bin/
+!/bin/**
+
 dotfiles add ~/.gitignore
 dotfiles commit -m "Unignore ~/bin"
+dotfiles add ~/bin
 ```
-
-> Note: a `.gitignore` placed inside an ignored subdirectory will not be read by git — the negation must always be added to the root `.gitignore`.
 
 ---
 
 ## Multiple machines
 
-Use **one branch per machine**. The baseline branch holds template-level defaults. Its name is `dotfiles.systemRef` (default `system`; any valid branch name, including `main` or `master`). Each machine branch is created off that baseline once (step 3). After that, `dotfiles update` pulls baseline improvements down onto the machine branch.
+Use **one branch per machine**. The baseline branch holds template-level defaults. Its name is `dotfiles.systemRef` (default `system`; any valid branch name, including `main` or `master`). Each machine branch is created off that baseline once (step 3). After that, `dotfiles-update` pulls baseline improvements down onto the machine branch.
 
 ```bash
 # Pull baseline improvements onto this machine
-dotfiles update
+dotfiles-update
 ```
 
-`dotfiles update` merges `origin/<dotfiles.systemRef>` onto your current branch. It follows that config, which defaults to `system`. It does not follow `origin/HEAD`. Confirm the work-tree is clean first (`dotfiles status`, or [`dotfiles doctor`](#health-check-dotfiles-doctor-optional)) — the same precaution called out in [step 3](#3-create-this-machines-branch).
+`dotfiles-update` merges `origin/<dotfiles.systemRef>` onto your current branch. It follows that config, which defaults to `system`. It does not follow `origin/HEAD`. Confirm the work-tree is clean first (`dotfiles status`, or [`dotfiles doctor`](#health-check-dotfiles-doctor-optional)) — the same precaution called out in [step 3](#3-create-this-machines-branch).
 
 If this instance already keeps the baseline on `master`:
 
@@ -429,13 +436,13 @@ Add a `dotfiles-update` wrapper to your shell profile (same pattern as `dotfiles
 **Bash / Zsh** (`~/.bashrc` or `~/.zshrc`):
 
 ```bash
-alias dotfiles-update='bash $HOME/.dotfiles/dotfiles-update.sh'
+alias dotfiles-update='bash $HOME/.local/share/dotfiles/dotfiles-update.sh'
 ```
 
 **PowerShell** (`$PROFILE`):
 
 ```powershell
-function dotfiles-update { pwsh "$HOME\.dotfiles\dotfiles-update.ps1" @args }
+function dotfiles-update { pwsh "$HOME/.local/share/dotfiles/dotfiles-update.ps1" @args }
 ```
 
 Then on any platform:
@@ -461,7 +468,7 @@ For full disaster-recovery automation, see [Restoring a machine from scratch](#r
 
 ## Restoring a machine from scratch
 
-The `dotfiles` alias lives in your profile — which hasn't been restored yet. The tracked bootstrap scripts define it temporarily, clone your bare repo, then check out your machine's branch (which restores the profile). They live in your repo at [`.dotfiles/bootstrap.sh`](.dotfiles/bootstrap.sh) and [`.dotfiles/bootstrap.ps1`](.dotfiles/bootstrap.ps1).
+The `dotfiles` alias lives in your profile — which hasn't been restored yet. The tracked bootstrap scripts define it temporarily, clone your bare repo, then check out your machine's branch (which restores the profile). They live in your repo at [`.local/share/dotfiles/bootstrap.sh`](.local/share/dotfiles/bootstrap.sh) and [`.local/share/dotfiles/bootstrap.ps1`](.local/share/dotfiles/bootstrap.ps1).
 
 Both take the repo URL and (optionally) the branch as **command-line parameters**:
 
@@ -531,13 +538,13 @@ Save the list somewhere if you want to keep a record of what files were managed.
 **Linux / macOS:**
 
 ```bash
-rm -rf ~/.dotfiles
+rm -rf ~/.local/share/dotfiles.git ~/.local/state/dotfiles ~/.cache/dotfiles
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-Remove-Item -Recurse -Force "$HOME\.dotfiles"
+Remove-Item -Recurse -Force "$HOME/.local/share/dotfiles.git", "$HOME/.local/state/dotfiles", "$HOME/.cache/dotfiles"
 ```
 
 After this, the `dotfiles` and `dotfiles-timer` wrappers in your shell profile still exist but no longer point at anything functional.
@@ -569,13 +576,13 @@ function dotfiles-timer {
 
 ### 6. (Optional) Clean up the auto-commit log
 
-**Windows** only — the user-mode loop writes to `%TEMP%`:
+`dotfiles-timer uninstall` deletes the logs in `~/.local/state/dotfiles/`. If you removed the timer by hand:
 
-```powershell
-Remove-Item "$env:TEMP\dotfiles-auto-commit.log*" -Force -ErrorAction SilentlyContinue
+```bash
+rm -f ~/.local/state/dotfiles/auto-commit.log ~/.local/state/dotfiles/stdout.log ~/.local/state/dotfiles/stderr.log
 ```
 
-Linux uses `journalctl`, which has its own retention; nothing to clean.
+Linux systemd also records the timer in the user journal (`journalctl --user -u dotfiles-git-commit.service`), which has its own retention.
 
 ### 7. Reload your shell
 
