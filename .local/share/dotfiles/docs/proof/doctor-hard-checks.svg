@@ -1,0 +1,336 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1026" height="772" viewBox="0 0 1026 772" role="img" aria-label="console2svg output">
+<style>
+.c2.c { font-family: "JetBrains Mono","Cascadia Mono","Segoe UI Mono","Noto Sans Mono","SFMono-Regular",Menlo,Consolas,"DejaVu Sans Mono","Liberation Mono",monospace; font-size: 14px; }
+.c2 text { white-space: pre; dominant-baseline: alphabetic; }
+.c2 .q { shape-rendering: crispEdges; }
+.c2 .c2b { animation: c2b 1s step-start infinite; }
+
+.c2 .aa{fill:#d4d4d4}
+@keyframes c2b { 50% { visibility: hidden; } }
+</style><defs><pattern id="c2-redacted-stripe" patternUnits="userSpaceOnUse" width="8" height="8"><path d="M0 0h8v8H0z" fill="#0c0c0c"/><path d="M-2,2 L2,-2 M0,8 L8,0 M6,10 L10,6" stroke="#d4d4d4" stroke-width="2" opacity="0.3"/></pattern></defs><defs>
+<linearGradient id="c2bg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#1a1d2e"/><stop offset="100%" stop-color="#252840"/></linearGradient>
+</defs>
+<rect width="1026" height="772" fill="url(#c2bg)"/>
+<rect x="0.5" y="0.5" width="1025" height="771" fill="#333" stroke="#333"/>
+<rect x="1" y="1" width="1024" height="34" fill="#333"/>
+<path d="M 8,35 L 8,11 Q 8,6 13,6 L 163,6 Q 168,6 168,11 L 168,35 Z" fill="#0c0c0c"/>
+<polyline points="16,15.5 20,19.5 16,23.5" fill="none" stroke="#cccccc" stroke-width="1.2" stroke-linejoin="round"/>
+<line x1="23" y1="24" x2="29" y2="24" stroke="#cccccc" stroke-width="1.2"/>
+<line x1="152.5" y1="16" x2="159.5" y2="23" stroke="#888888" stroke-width="1.1"/>
+<line x1="159.5" y1="16" x2="152.5" y2="23" stroke="#888888" stroke-width="1.1"/>
+<line x1="906" y1="19.5" x2="916" y2="19.5" stroke="#cccccc" stroke-width="1.2"/>
+<rect x="952" y="14.5" width="10" height="10" fill="none" stroke="#cccccc" stroke-width="1.2"/>
+<line x1="998" y1="14.5" x2="1008" y2="24.5" stroke="#cccccc" stroke-width="1.3"/>
+<line x1="1008" y1="14.5" x2="998" y2="24.5" stroke="#cccccc" stroke-width="1.3"/>
+
+<rect x="1" y="35" width="1024" height="736" fill="#0c0c0c"/>
+<defs>
+<g id="c2r0" class="c2 c" xml:space="preserve">
+<rect width="1008" height="18" id="c2e0" fill="#0c0c0c"/>
+<text class="aa" y="14" textLength="680.4">Check: dotfiles-doctor passes every hard check when the network check is skipped.</text>
+</g>
+<g id="c2r1" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+</g>
+<g id="c2r2" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" y="14" textLength="856.8">Expect: The hooks directory and the cache pyvenv.cfg exist, and doctor prints: all hard checks PASSED.</text>
+</g>
+<g id="c2r3" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" y="14" textLength="344.4">$ ls -d ~/.local/share/dotfiles/.githooks</text>
+</g>
+<g id="c2r4" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" y="14" textLength="369.6">/home/runner/.local/share/dotfiles/.githooks</text>
+</g>
+<g id="c2r5" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" y="14" textLength="436.8">$ ls -l ~/.cache/dotfiles/githooks-runner/pyvenv.cfg</text>
+</g>
+<g id="c2r6" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" y="14" textLength="831.6">-rw-r--r-- 1 runner runner 140 Oct  1 18:05 /home/runner/.cache/dotfiles/githooks-runner/pyvenv.cfg</text>
+</g>
+<g id="c2r7" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" y="14" textLength="268.8">$ dotfiles-doctor --skip-network</text>
+</g>
+<g id="c2r8" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" y="14" textLength="621.6">dotfiles doctor — checking setup at /home/runner/.local/share/dotfiles.git</text>
+</g>
+<g id="c2r9" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" x="16.8" y="14" textLength="504">PASS  uv on PATH (/opt/hostedtoolcache/uv/0.12.21/x86_64/uv)</text>
+</g>
+<g id="c2r10" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" x="16.8" y="14" textLength="562.8">PASS  core.hooksPath = /home/runner/.local/share/dotfiles/.githooks</text>
+</g>
+<g id="c2r11" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" x="16.8" y="14" textLength="302.4">PASS  status.showUntrackedFiles = no</text>
+</g>
+<g id="c2r12" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" x="16.8" y="14" textLength="277.2">PASS  githooks-runner venv synced</text>
+</g>
+<g id="c2r13" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" x="16.8" y="14" textLength="352.8">PASS  work-tree clean (no tracked changes)</text>
+</g>
+<g id="c2r14" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" x="16.8" y="14" textLength="184.8">INFO  HEAD is &apos;laptop&apos;</text>
+</g>
+<g id="c2r15" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" x="16.8" y="14" textLength="554.4">INFO  system baseline ref = system (git config dotfiles.systemRef)</text>
+</g>
+<g id="c2r16" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" x="16.8" y="14" textLength="588">INFO  user_hooks.example not present (optional customization template)</text>
+</g>
+<g id="c2r17" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" x="16.8" y="14" textLength="722.4">INFO  user_hooks.py not activated (copy user_hooks.example to user_hooks.py to enable)</text>
+</g>
+<g id="c2r18" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" x="16.8" y="14" textLength="588">INFO  auto-commit timer not enabled (optional: dotfiles-timer install)</text>
+</g>
+<g id="c2r19" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" x="16.8" y="14" textLength="445.2">INFO  network/SSH push check skipped (--skip-network)</text>
+</g>
+<g id="c2r20" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" y="14" textLength="260.4">doctor: all hard checks PASSED.</text>
+</g>
+<g id="c2r21" class="c2 c" xml:space="preserve">
+<use href="#c2e0"/>
+<text class="aa" y="14" textLength="579.6">Result: PASS. Every hard check passed. The network check was skipped.</text>
+</g>
+</defs>
+<g transform="translate(9 43)">
+<g>
+<use href="#c2r0" display="inline"/>
+<use href="#c2r1" y="18" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.043596" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r2" y="18" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.043596" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r1" y="36" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.087045" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r3" y="36" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.087045" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r1" y="54" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.087045" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r4" y="54" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.087045" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r1" y="72" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.13059" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r5" y="72" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.13059" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r1" y="90" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.13059" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r6" y="90" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.13059" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r1" y="108" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.173944" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r7" y="108" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.173944" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r1" y="126" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.180128" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r8" y="126" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.180128" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r1" y="144" display="inline"/>
+<use href="#c2r1" y="162" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.266434" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r9" y="162" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.266434" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r1" y="180" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.30959" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r10" y="180" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.30959" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r1" y="198" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.352758" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r11" y="198" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.352758" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r1" y="216" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.395918" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r12" y="216" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.395918" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r1" y="234" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.439086" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r13" y="234" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.439086" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r1" y="252" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.482255" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r14" y="252" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.482255" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r1" y="270" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.52542" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r15" y="270" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.52542" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r1" y="288" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.568579" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r16" y="288" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.568579" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r1" y="306" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.611745" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r17" y="306" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.611745" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r1" y="324" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.654911" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r18" y="324" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.654911" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r1" y="342" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.698085" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r19" y="342" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.698085" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r1" y="360" display="inline"/>
+<use href="#c2r1" y="378" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.784429" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r20" y="378" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.784429" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r1" y="396" display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.827965" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r21" y="396" display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.827965" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+</use>
+<use href="#c2r1" y="414" display="inline"/>
+<use href="#c2r1" y="432" display="inline"/>
+<use href="#c2r1" y="450" display="inline"/>
+<use href="#c2r1" y="468" display="inline"/>
+<use href="#c2r1" y="486" display="inline"/>
+<use href="#c2r1" y="504" display="inline"/>
+<use href="#c2r1" y="522" display="inline"/>
+<use href="#c2r1" y="540" display="inline"/>
+<use href="#c2r1" y="558" display="inline"/>
+<use href="#c2r1" y="576" display="inline"/>
+<use href="#c2r1" y="594" display="inline"/>
+<use href="#c2r1" y="612" display="inline"/>
+<use href="#c2r1" y="630" display="inline"/>
+<use href="#c2r1" y="648" display="inline"/>
+<use href="#c2r1" y="666" display="inline"/>
+<use href="#c2r1" y="684" display="inline"/>
+<use href="#c2r1" y="702" display="inline"/>
+<g display="none">
+<animate attributeName="display" values="inline;none" keyTimes="0;0.043596" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+<rect class="u" y="18" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
+</g>
+<g display="none">
+<animate attributeName="display" values="none;inline;none" keyTimes="0;0.043596;0.087045" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+<rect class="u" y="36" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
+</g>
+<g display="none">
+<animate attributeName="display" values="none;inline;none" keyTimes="0;0.087045;0.13059" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+<rect class="u" y="72" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
+</g>
+<g display="none">
+<animate attributeName="display" values="none;inline;none" keyTimes="0;0.13059;0.173944" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+<rect class="u" y="108" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
+</g>
+<g display="none">
+<animate attributeName="display" values="none;inline;none" keyTimes="0;0.173944;0.180128" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+<rect class="u" y="126" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
+</g>
+<g display="none">
+<animate attributeName="display" values="none;inline;none" keyTimes="0;0.180128;0.266434" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+<rect class="u" y="144" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
+</g>
+<g display="none">
+<animate attributeName="display" values="none;inline;none" keyTimes="0;0.266434;0.30959" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+<rect class="u" y="180" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
+</g>
+<g display="none">
+<animate attributeName="display" values="none;inline;none" keyTimes="0;0.30959;0.352758" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+<rect class="u" y="198" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
+</g>
+<g display="none">
+<animate attributeName="display" values="none;inline;none" keyTimes="0;0.352758;0.395918" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+<rect class="u" y="216" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
+</g>
+<g display="none">
+<animate attributeName="display" values="none;inline;none" keyTimes="0;0.395918;0.439086" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+<rect class="u" y="234" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
+</g>
+<g display="none">
+<animate attributeName="display" values="none;inline;none" keyTimes="0;0.439086;0.482255" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+<rect class="u" y="252" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
+</g>
+<g display="none">
+<animate attributeName="display" values="none;inline;none" keyTimes="0;0.482255;0.52542" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+<rect class="u" y="270" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
+</g>
+<g display="none">
+<animate attributeName="display" values="none;inline;none" keyTimes="0;0.52542;0.568579" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+<rect class="u" y="288" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
+</g>
+<g display="none">
+<animate attributeName="display" values="none;inline;none" keyTimes="0;0.568579;0.611745" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+<rect class="u" y="306" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
+</g>
+<g display="none">
+<animate attributeName="display" values="none;inline;none" keyTimes="0;0.611745;0.654911" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+<rect class="u" y="324" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
+</g>
+<g display="none">
+<animate attributeName="display" values="none;inline;none" keyTimes="0;0.654911;0.698085" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+<rect class="u" y="342" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
+</g>
+<g display="none">
+<animate attributeName="display" values="none;inline;none" keyTimes="0;0.698085;0.784429" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+<rect class="u" y="360" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
+</g>
+<g display="none">
+<animate attributeName="display" values="none;inline;none" keyTimes="0;0.784429;0.827965" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+<rect class="u" y="396" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
+</g>
+<g display="none">
+<animate attributeName="display" values="none;inline" keyTimes="0;0.827965" dur="11.626s" calcMode="discrete" repeatCount="indefinite"/>
+<rect class="u" y="414" width="8.4" height="18" fill="#d4d4d4" opacity="0.65"/>
+</g>
+</g>
+</g>
+</svg>
