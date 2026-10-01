@@ -4,9 +4,9 @@
 set -euo pipefail
 
 PROOF_OUT="${PROOF_OUT:-$GITHUB_WORKSPACE/proof}"
-USAGE_OUT="${USAGE_OUT:-$PROOF_OUT/usage}"
 REMOTE="${REMOTE:-/tmp/dotfiles-remote.git}"
 TOOL="$GITHUB_WORKSPACE/.local/share/dotfiles"
+DOCS="$TOOL/docs/proof"
 
 # Replay stdout and stderr slowly enough that a frame can hold each line.
 show_log() {
@@ -23,6 +23,25 @@ show() {
   "$@" >"$log" 2>&1
   show_log "$log"
   rm -f "$log"
+}
+
+# Two lines before the commands: the question, then the output that means pass.
+# Result is printed only after the assertions, so a failed tape has no Result line.
+explain() {
+  printf '%s\n' "Check: $1"
+  sleep 0.5
+  printf '%s\n' "Expect: $2"
+  sleep 0.5
+}
+
+note() {
+  printf '%s\n' "$1"
+  sleep 0.5
+}
+
+pass() {
+  printf '%s\n' "Result: PASS. $1"
+  sleep 0.5
 }
 
 # $1 is the command a reviewer reads. The rest is what runs.
@@ -108,100 +127,95 @@ prepare_remote() {
   rm -rf "$seed"
 }
 
-step_layout() {
-  cd "$HOME"
-  local old rc
-  old="$(old_directory)"
-  run "git symbolic-ref HEAD" gitdir symbolic-ref HEAD
-  run "git config --get dotfiles.systemRef" gitdir config --get dotfiles.systemRef
-  run "git --git-dir=$REMOTE symbolic-ref HEAD" git --git-dir="$REMOTE" symbolic-ref HEAD
-  run "ls -d ~/.local/share/dotfiles.git/HEAD" ls -d "$HOME/.local/share/dotfiles.git/HEAD"
-  run "ls -d ~/.local/share/dotfiles/bootstrap.sh" ls -d "$HOME/.local/share/dotfiles/bootstrap.sh"
-  run_fail "ls -d ~/.local/share/dotfiles/HEAD" ls -d "$HOME/.local/share/dotfiles/HEAD"
-  run_fail "ls -d $old" ls -d "$old"
-  run "git add -A" gitdir add -A
-  printf '$ git diff --cached --quiet; echo $?\n'
-  set +e
-  gitdir diff --cached --quiet
-  rc=$?
-  set -e
-  echo "$rc"
-  if [ "$rc" -ne 0 ]; then
-    gitdir diff --cached --name-only
-    echo "FAIL: git add -A staged paths"
-    gitdir reset -q
-    exit 1
-  fi
-  gitdir reset -q
-  run "git check-ignore -v .local/share/dotfiles.git/HEAD" \
-    gitdir check-ignore -v .local/share/dotfiles.git/HEAD
-  echo "PROOF layout ok"
+typed() {
+  printf '$ %s\n' "$1"
+  sleep 0.5
 }
 
-step_hooks() {
+story_program() {
   cd "$HOME"
-  gitdir config core.hooksPath "$HOME/.local/share/dotfiles/.githooks"
-  run "git config --get core.hooksPath" gitdir config --get core.hooksPath
-  export UV_PROJECT_ENVIRONMENT="$HOME/.cache/dotfiles/githooks-runner"
-  run "uv sync --project ~/.local/share/dotfiles/githooks-runner --frozen" \
-    uv sync --project "$HOME/.local/share/dotfiles/githooks-runner" --frozen -q
-  run "ls -d ~/.cache/dotfiles/githooks-runner/pyvenv.cfg" \
-    ls -d "$HOME/.cache/dotfiles/githooks-runner/pyvenv.cfg"
-  run_fail "ls -d ~/.local/share/dotfiles/githooks-runner/.venv" \
-    ls -d "$HOME/.local/share/dotfiles/githooks-runner/.venv"
-  echo "PROOF hooks ok"
-}
-
-step_timer_where() {
-  cd "$HOME"
-  run "ls -d ~/.local/state/dotfiles/auto-commit.sh" \
-    ls -d "$HOME/.local/state/dotfiles/auto-commit.sh"
-  run "grep ExecStart ~/.config/systemd/user/dotfiles-git-commit.service" \
-    grep -F ExecStart "$HOME/.config/systemd/user/dotfiles-git-commit.service"
-  run_fail "ls -d ~/.local/share/dotfiles.git/auto-commit.sh" \
-    ls -d "$HOME/.local/share/dotfiles.git/auto-commit.sh"
-  run_fail "ls -d ~/.local/share/dotfiles/auto-commit.sh" \
-    ls -d "$HOME/.local/share/dotfiles/auto-commit.sh"
-  echo "PROOF timer-where ok"
-}
-
-step_uninstall() {
-  cd "$HOME"
-  run "dotfiles-timer uninstall" bash "$TOOL/dotfiles-timer.sh" uninstall
-  run_fail "ls -d ~/.config/systemd/user/dotfiles-git-commit.service" \
-    ls -d "$HOME/.config/systemd/user/dotfiles-git-commit.service"
-  run_fail "ls -d ~/.local/state/dotfiles/auto-commit.sh" \
-    ls -d "$HOME/.local/state/dotfiles/auto-commit.sh"
-  run "ls -d ~/.local/share/dotfiles.git/HEAD" \
-    ls -d "$HOME/.local/share/dotfiles.git/HEAD"
-  run "ls -d ~/.local/share/dotfiles/dotfiles-timer.sh" \
-    ls -d "$HOME/.local/share/dotfiles/dotfiles-timer.sh"
-  echo "PROOF uninstall ok"
-}
-
-story_new_machine() {
-  cd "$HOME"
+  explain \
+    "The program directory and the git database are both present, and this machine is on branch laptop." \
+    "ls lists dotfiles/ and dotfiles.git/. dotfiles status -sb prints ## laptop."
   run "ls -F ~/.local/share" ls -F "$HOME/.local/share"
   run "ls -F ~/.local/share/dotfiles.git" ls -F "$HOME/.local/share/dotfiles.git"
   run "ls -F ~/.local/share/dotfiles" ls -F "$HOME/.local/share/dotfiles"
   run "dotfiles status -sb" dotfiles status -sb
+  dotfiles status -sb | grep -q '## laptop'
+  ls -d "$HOME/.local/share/dotfiles" "$HOME/.local/share/dotfiles.git" >/dev/null
+  pass "Both directories are listed, and the branch is laptop."
 }
 
-story_track_bashrc() {
+story_layout() {
   cd "$HOME"
+  local old rc got
+  old="$(old_directory)"
+  explain \
+    "The git database, the program directory, and the host default are separate, and add -A stages nothing." \
+    "Branch is laptop, systemRef is system, the remote default is refs/heads/main, the program has no HEAD, the retired directory is absent, and the cached diff status is 0."
+  run "dotfiles symbolic-ref HEAD" dotfiles symbolic-ref HEAD
+  [ "$(dotfiles symbolic-ref HEAD)" = "refs/heads/laptop" ]
+  run "dotfiles config --get dotfiles.systemRef" dotfiles config --get dotfiles.systemRef
+  [ "$(dotfiles config --get dotfiles.systemRef)" = "system" ]
+  note "The next command reads the temp remote. It must print refs/heads/main. Update merges system, not that default."
+  printf '$ %s\n' "git --git-dir=$REMOTE symbolic-ref HEAD"
+  got="$(git --git-dir="$REMOTE" symbolic-ref HEAD)"
+  printf '%s\n' "$got"
+  sleep 0.5
+  [ "$got" = "refs/heads/main" ]
+  run "ls -d ~/.local/share/dotfiles.git/HEAD" ls -d "$HOME/.local/share/dotfiles.git/HEAD"
+  run "ls -d ~/.local/share/dotfiles/bootstrap.sh" ls -d "$HOME/.local/share/dotfiles/bootstrap.sh"
+  note "The next command must fail. The program directory is not a git database."
+  run_fail "ls -d ~/.local/share/dotfiles/HEAD" ls -d "$HOME/.local/share/dotfiles/HEAD"
+  note "The next command must fail. Setup does not create the retired home directory."
+  run_fail "ls -d $old" ls -d "$old"
+  run "dotfiles add -A" dotfiles add -A
+  note "The next status is 0 when that add staged nothing."
+  printf '$ %s\n' "dotfiles diff --cached --quiet; echo \$?"
+  set +e
+  dotfiles diff --cached --quiet
+  rc=$?
+  set -e
+  printf '%s\n' "$rc"
+  sleep 0.5
+  if [ "$rc" -ne 0 ]; then
+    dotfiles diff --cached --name-only
+    echo "FAIL: dotfiles add -A staged paths"
+    dotfiles reset -q
+    exit 1
+  fi
+  dotfiles reset -q
+  run "dotfiles check-ignore -v .local/share/dotfiles.git/HEAD" \
+    dotfiles check-ignore -v .local/share/dotfiles.git/HEAD
+  pass "The git database is separate from the program, the remote default is main, and add -A staged nothing."
+}
+
+story_track() {
+  cd "$HOME"
+  explain \
+    "A new ~/.bashrc is ignored until add -f, then the commit and push stay on branch laptop." \
+    "check-ignore prints the ignore rule. add without -f says the path is ignored. status still prints ## laptop."
+  typed "printf 'alias ll=\"ls -la\"\\n' > ~/.bashrc"
   printf 'alias ll="ls -la"\n' > .bashrc
   run "ls -l ~/.bashrc" ls -l "$HOME/.bashrc"
   run "cat ~/.bashrc" cat "$HOME/.bashrc"
   run "dotfiles check-ignore -v ~/.bashrc" dotfiles check-ignore -v "$HOME/.bashrc"
+  note "The next command must fail. The root ignore hides this file until add -f."
   run_fail "dotfiles add ~/.bashrc" dotfiles add "$HOME/.bashrc"
   run "dotfiles add -f ~/.bashrc" dotfiles add -f "$HOME/.bashrc"
   run "dotfiles commit -m \"Add bashrc\"" dotfiles commit -m "Add bashrc"
   run "dotfiles push -u origin HEAD" dotfiles push -u origin HEAD
   run "dotfiles status -sb" dotfiles status -sb
+  dotfiles status -sb | grep -q '## laptop'
+  pass "~/.bashrc is tracked on laptop, and the push set its upstream."
 }
 
-story_edit_tomorrow() {
+story_edit() {
   cd "$HOME"
+  explain \
+    "A later edit of the tracked ~/.bashrc is committed with add -u, and the branch stays laptop." \
+    "diff shows export EDITOR=vim. log --stat names .bashrc. status still prints ## laptop."
+  typed "printf '\\n# prefer vim\\nexport EDITOR=vim\\n' >> ~/.bashrc"
   printf '\n# prefer vim\nexport EDITOR=vim\n' >> .bashrc
   run "cat ~/.bashrc" cat "$HOME/.bashrc"
   run_diff "dotfiles diff ~/.bashrc" dotfiles diff -- "$HOME/.bashrc"
@@ -209,44 +223,86 @@ story_edit_tomorrow() {
   run "dotfiles add -u ." dotfiles add -u .
   run "dotfiles commit -m \"Set EDITOR\"" dotfiles commit -m "Set EDITOR"
   run "dotfiles log -1 --stat" dotfiles log -1 --stat
+  dotfiles log -1 --stat | grep -q '.bashrc'
   run "dotfiles status -sb" dotfiles status -sb
+  dotfiles status -sb | grep -q '## laptop'
+  pass "The EDITOR line is committed on laptop."
+}
+
+story_hooks() {
+  cd "$HOME"
+  explain \
+    "Hooks point at the program .githooks directory, and the virtualenv is in the cache, not the program tree." \
+    "core.hooksPath is the program .githooks path. The cache pyvenv.cfg is listed. A program-tree .venv is absent."
+  run "dotfiles config --get core.hooksPath" dotfiles config --get core.hooksPath
+  dotfiles config --get core.hooksPath | grep -q '/.local/share/dotfiles/.githooks'
+  run "ls -d ~/.cache/dotfiles/githooks-runner/pyvenv.cfg" \
+    ls -d "$HOME/.cache/dotfiles/githooks-runner/pyvenv.cfg"
+  note "The next command must fail. The virtualenv is not created inside the program tree."
+  run_fail "ls -d ~/.local/share/dotfiles/githooks-runner/.venv" \
+    ls -d "$HOME/.local/share/dotfiles/githooks-runner/.venv"
+  pass "Hooks use the program directory, and the virtualenv is only in the cache."
 }
 
 story_doctor() {
   cd "$HOME"
+  local log
+  explain \
+    "dotfiles-doctor passes every hard check when the network check is skipped." \
+    "The hooks directory and the cache pyvenv.cfg exist, and doctor prints: all hard checks PASSED."
   run "ls -d ~/.local/share/dotfiles/.githooks" ls -d "$HOME/.local/share/dotfiles/.githooks"
   run "ls -l ~/.cache/dotfiles/githooks-runner/pyvenv.cfg" \
     ls -l "$HOME/.cache/dotfiles/githooks-runner/pyvenv.cfg"
-  run "dotfiles-doctor --skip-network" bash "$TOOL/dotfiles-doctor.sh" --skip-network
+  printf '$ %s\n' "dotfiles-doctor --skip-network"
+  log="$(mktemp)"
+  bash "$TOOL/dotfiles-doctor.sh" --skip-network >"$log" 2>&1
+  show_log "$log"
+  grep -q 'all hard checks PASSED' "$log"
+  if grep -q '  FAIL  ' "$log"; then
+    echo "FAIL: a hard check failed"
+    exit 1
+  fi
+  rm -f "$log"
+  pass "Every hard check passed. The network check was skipped."
 }
 
-story_inherit() {
+story_update() {
   cd "$HOME"
+  explain \
+    "dotfiles-update merges branch system onto laptop and does not bring the file that exists only on main." \
+    "The update merges origin/system. SYSTEM_ONLY.txt says only on the named baseline. status is ## laptop. ~/DEFAULT_ONLY.txt is missing."
   run "dotfiles-update" bash "$TOOL/dotfiles-update.sh"
   run "ls -l ~/.local/share/dotfiles/SYSTEM_ONLY.txt" \
     ls -l "$HOME/.local/share/dotfiles/SYSTEM_ONLY.txt"
   run "cat ~/.local/share/dotfiles/SYSTEM_ONLY.txt" \
     cat "$HOME/.local/share/dotfiles/SYSTEM_ONLY.txt"
+  grep -qx 'only on the named baseline' "$HOME/.local/share/dotfiles/SYSTEM_ONLY.txt"
   run "dotfiles log -1 --stat" dotfiles log -1 --stat
   run "dotfiles status -sb" dotfiles status -sb
+  dotfiles status -sb | grep -q '## laptop'
+  note "The next command must fail. That file exists only on the host default branch, main."
+  run_fail "ls -d ~/DEFAULT_ONLY.txt" ls -d "$HOME/DEFAULT_ONLY.txt"
   if [ -e "$HOME/DEFAULT_ONLY.txt" ]; then
     echo "FAIL: file from the host default branch is in the home directory"
     exit 1
   fi
+  pass "laptop merged system, the baseline file is present, and the main-only file is absent."
 }
 
-story_walk_away() {
+story_timer() {
   cd "$HOME"
   local before after log head remote_head
-  printf '$ %s\n' "printf '\\n# left the desk\\n' >> ~/.bashrc"
+  explain \
+    "The generated timer script commits a tracked ~/.bashrc edit and pushes it on branch laptop." \
+    "diff shows # left the desk. The script names .bashrc and does not say Everything up-to-date. log --stat names .bashrc."
+  typed "printf '\\n# left the desk\\n' >> ~/.bashrc"
   printf '\n# left the desk\n' >> .bashrc
-  sleep 0.5
   run_diff "dotfiles diff ~/.bashrc" dotfiles diff -- "$HOME/.bashrc"
   grep -F '# left the desk' < <(dotfiles diff -- "$HOME/.bashrc" || true) >/dev/null
   run "ls -l ~/.local/state/dotfiles/auto-commit.sh" \
     ls -l "$HOME/.local/state/dotfiles/auto-commit.sh"
   before="$(git --git-dir="$REMOTE" rev-parse refs/heads/laptop)"
-  printf '$ bash ~/.local/state/dotfiles/auto-commit.sh\n'
+  printf '$ %s\n' "bash ~/.local/state/dotfiles/auto-commit.sh"
   log="$(mktemp)"
   bash "$HOME/.local/state/dotfiles/auto-commit.sh" >"$log" 2>&1
   if grep -F 'Everything up-to-date' "$log"; then
@@ -269,38 +325,77 @@ story_walk_away() {
   fi
   run "cat ~/.bashrc" cat "$HOME/.bashrc"
   run "dotfiles log -1 --stat" dotfiles log -1 --stat
+  dotfiles log -1 --stat | grep -q '.bashrc'
   run "dotfiles status -sb" dotfiles status -sb
+  dotfiles status -sb | grep -q '## laptop'
+  pass "The timer script committed the desk line and pushed it on laptop."
 }
 
-record_movie() {
+story_timer_where() {
+  cd "$HOME"
+  explain \
+    "The timer runs the script in the state directory, not a copy in the git database or the program directory." \
+    "auto-commit.sh is under ~/.local/state/dotfiles. The unit starts that path. The same name is absent from the git database and the program directory."
+  run "ls -d ~/.local/state/dotfiles/auto-commit.sh" \
+    ls -d "$HOME/.local/state/dotfiles/auto-commit.sh"
+  run "cat ~/.config/systemd/user/dotfiles-git-commit.service" \
+    cat "$HOME/.config/systemd/user/dotfiles-git-commit.service"
+  grep -q "$HOME/.local/state/dotfiles/auto-commit.sh" \
+    "$HOME/.config/systemd/user/dotfiles-git-commit.service"
+  note "The next two commands must fail. The generated script is not stored in git."
+  run_fail "ls -d ~/.local/share/dotfiles.git/auto-commit.sh" \
+    ls -d "$HOME/.local/share/dotfiles.git/auto-commit.sh"
+  run_fail "ls -d ~/.local/share/dotfiles/auto-commit.sh" \
+    ls -d "$HOME/.local/share/dotfiles/auto-commit.sh"
+  pass "The unit starts the state-directory script, and no copy sits in the git database or the program."
+}
+
+story_uninstall() {
+  cd "$HOME"
+  explain \
+    "Uninstall removes the timer unit and the generated script, and leaves the git database and the program in place." \
+    "After uninstall, the service file and auto-commit.sh are gone. The git database HEAD and dotfiles-timer.sh are still listed."
+  run "dotfiles-timer uninstall" bash "$TOOL/dotfiles-timer.sh" uninstall
+  note "The next two commands must fail. Those files are what uninstall removes."
+  run_fail "ls -d ~/.config/systemd/user/dotfiles-git-commit.service" \
+    ls -d "$HOME/.config/systemd/user/dotfiles-git-commit.service"
+  run_fail "ls -d ~/.local/state/dotfiles/auto-commit.sh" \
+    ls -d "$HOME/.local/state/dotfiles/auto-commit.sh"
+  run "ls -d ~/.local/share/dotfiles.git/HEAD" \
+    ls -d "$HOME/.local/share/dotfiles.git/HEAD"
+  run "ls -d ~/.local/share/dotfiles/dotfiles-timer.sh" \
+    ls -d "$HOME/.local/share/dotfiles/dotfiles-timer.sh"
+  pass "Uninstall removed the timer and the generated script, and left the repository."
+}
+
+record_tape() {
   local name="$1"
   local expect="$2"
   local height="$3"
+  local kind="$4"
   local cast="$PROOF_OUT/$name.cast"
-  local movie="$USAGE_OUT/$name.svg"
+  local svg="$PROOF_OUT/$name.svg"
   local png="$PROOF_OUT/$name.png"
+  local -a extra=()
+  if [ "$kind" = movie ]; then
+    extra=(-v --sleep 2 --fps 8)
+  fi
 
-  # -v writes an animated SVG. --sleep holds the last screen before the
-  # movie repeats. --save-cast keeps the tape. No -c and no --header:
-  # those paint a permanent first line (the capture command, or a title)
-  # above the transcript the README shows.
+  # No -c and no --header. Those paint a permanent first line above Check.
   console2svg capture \
-    -v \
-    --sleep 2 \
-    --fps 8 \
+    "${extra[@]}" \
     --mask-auto false \
-    -w 110 \
+    -w 120 \
     -h "$height" \
     -d windows \
     --timing realtime \
     --save-cast "$cast" \
-    -o "$movie" \
-    -- bash "$0" story "$name"
+    -o "$svg" \
+    -- bash "$0" "$kind" "$name"
   if ! grep -q "$expect" "$cast"; then
     echo "visual-proof: tape $name.cast does not contain: $expect" >&2
     exit 1
   fi
-  # A readable movie lasts longer than a single dumped frame.
   local last
   last="$(tail -n 1 "$cast" | sed -n 's/^\[\([0-9.][0-9.]*\),.*/\1/p')"
   awk -v t="$last" 'BEGIN { if (t+0 < 2) exit 1 }' || {
@@ -310,48 +405,8 @@ record_movie() {
   console2svg capture \
     --in "$cast" \
     --mask-auto false \
-    -w 110 \
+    -w 120 \
     -h "$height" \
-    -d windows \
-    --svg-converter rsvg-convert \
-    -o "$png" \
-    --format png
-  test -s "$movie"
-  test -s "$png"
-  test -s "$cast"
-  cp "$movie" "$PROOF_OUT/$name.svg"
-}
-
-record() {
-  local name="$1"
-  local expect="$2"
-  local cast="$PROOF_OUT/$name.cast"
-  local svg="$PROOF_OUT/$name.svg"
-  local png="$PROOF_OUT/$name.png"
-
-  # v0.10.1 capture has no --json. The tape must contain the step's final
-  # PROOF line, which the step prints only after every check has passed.
-  console2svg capture \
-    --mask-auto false \
-    -w 120 \
-    -h 48 \
-    -d windows \
-    -c \
-    --timing realtime \
-    --save-cast "$cast" \
-    -o "$svg" \
-    -- bash "$0" step "$name"
-  if ! grep -q "$expect" "$cast"; then
-    echo "visual-proof: tape $name.cast does not contain: $expect" >&2
-    exit 1
-  fi
-
-  # Still PNG is rendered from the tape, so the picture is that recording.
-  console2svg capture \
-    --in "$cast" \
-    --mask-auto false \
-    -w 120 \
-    -h 48 \
     -d windows \
     --svg-converter rsvg-convert \
     -o "$png" \
@@ -361,82 +416,69 @@ record() {
   test -s "$cast"
 }
 
-write_index() {
-  cat >"$PROOF_OUT/INDEX.txt" <<'EOF'
-Each step is one recording.
-
-.cast  asciicast v2 tape of the terminal session (the recording)
-.svg   still image of the final screen, captured with the tape
-.png   the same still, rendered from the tape for review
-
-Read the command, then the lines under it. A sentence we printed is not the proof.
-
-01-new-machine    ls of ~/.local/share, ls of the git database, ls of the program, dotfiles status -sb
-02-layout          ls of the git database HEAD, ls failing in the program directory, ls failing for the legacy path, diff --cached exit 0, check-ignore of the git database
-02-track-bashrc    ls and cat of ~/.bashrc, dotfiles check-ignore, dotfiles add rejected, dotfiles add -f, commit, push
-03-edit-tomorrow   cat of ~/.bashrc, dotfiles diff, add -u, commit, log --stat
-03-hooks           git config core.hooksPath, ls of the cache pyvenv.cfg, ls failing for a program .venv
-04-doctor          ls of the hooks directory and the cache pyvenv.cfg, then dotfiles-doctor
-05-inherit-system  dotfiles-update, then ls and cat of the file that arrived
-06-walk-away       printf into ~/.bashrc, dotfiles diff, the timer script's commit, cat, log --stat
-07-timer-where     ls of the state-dir script, grep ExecStart, ls failing inside the git dir and the program dir
-08-uninstall       ls failing for the unit and the state script, ls succeeding for the git database and the program
-
-usage/ holds the animated day. The stills stay beside their tapes in this directory.
-EOF
-}
-
 all() {
-  mkdir -p "$PROOF_OUT" "$USAGE_OUT"
+  mkdir -p "$PROOF_OUT"
+  cp "$DOCS/README.md" "$PROOF_OUT/README.md"
   git config --global user.email "laptop@localhost"
   git config --global user.name "laptop"
   git config --global --add safe.directory '*'
   prepare_remote
-  # Setup is off-camera. The movie starts at the commands in the README.
   bash "$TOOL/bootstrap.sh" --repo "$REMOTE" --branch laptop --system-ref system
-  record_movie 01-new-machine '## laptop' 42
-  record 02-layout 'PROOF layout ok'
-  record_movie 02-track-bashrc 'The following paths are ignored' 44
-  record_movie 03-edit-tomorrow 'export EDITOR=vim' 40
-  record 03-hooks 'PROOF hooks ok'
-  record_movie 04-doctor 'all hard checks PASSED' 36
-  record_movie 05-inherit-system 'only on the named baseline' 40
+  record_tape program-directory-and-git-database \
+    'Result: PASS. Both directories are listed, and the branch is laptop.' 52 movie
+  record_tape separate-database-program-and-baseline \
+    'Result: PASS. The git database is separate from the program' 64 still
+  record_tape track-home-bashrc \
+    'Result: PASS. ~/.bashrc is tracked on laptop' 56 movie
+  record_tape commit-bashrc-edit \
+    'Result: PASS. The EDITOR line is committed on laptop.' 56 movie
+  export UV_PROJECT_ENVIRONMENT="$HOME/.cache/dotfiles/githooks-runner"
+  dotfiles config core.hooksPath "$HOME/.local/share/dotfiles/.githooks"
+  uv sync --project "$HOME/.local/share/dotfiles/githooks-runner" --frozen -q
+  record_tape hook-venv-lives-in-cache \
+    'Result: PASS. Hooks use the program directory' 32 still
+  record_tape doctor-hard-checks \
+    'Result: PASS. Every hard check passed.' 40 movie
+  record_tape update-merges-system-branch \
+    'Result: PASS. laptop merged system' 52 movie
   # install enables the timer immediately. Stop it so the movie's script
   # is the commit on screen, then the later stills still see the unit files.
   bash "$TOOL/dotfiles-timer.sh" install
   systemctl --user stop dotfiles-git-commit.timer
   systemctl --user stop dotfiles-git-commit.service || true
-  record_movie 06-walk-away '# left the desk' 48
-  record 07-timer-where 'PROOF timer-where ok'
-  record 08-uninstall 'PROOF uninstall ok'
-  write_index
+  record_tape timer-script-commits-bashrc \
+    'Result: PASS. The timer script committed the desk line' 64 movie
+  record_tape timer-script-lives-in-state \
+    'Result: PASS. The unit starts the state-directory script' 48 still
+  record_tape uninstall-removes-timer-keeps-repo \
+    'Result: PASS. Uninstall removed the timer' 36 still
   echo "visual-proof: wrote $PROOF_OUT"
 }
 
 case "${1:-}" in
   all) all ;;
-  step)
+  movie)
     case "${2:-}" in
-      02-layout) step_layout ;;
-      03-hooks) step_hooks ;;
-      07-timer-where) step_timer_where ;;
-      08-uninstall) step_uninstall ;;
-      *) echo "visual-proof: unknown step ${2:-}" >&2; exit 2 ;;
+      program-directory-and-git-database) story_program ;;
+      track-home-bashrc) story_track ;;
+      commit-bashrc-edit) story_edit ;;
+      doctor-hard-checks) story_doctor ;;
+      update-merges-system-branch) story_update ;;
+      timer-script-commits-bashrc) story_timer ;;
+      *) echo "visual-proof: unknown movie ${2:-}" >&2; exit 2 ;;
     esac
     ;;
-  story)
+  still)
     case "${2:-}" in
-      01-new-machine) story_new_machine ;;
-      02-track-bashrc) story_track_bashrc ;;
-      03-edit-tomorrow) story_edit_tomorrow ;;
-      04-doctor) story_doctor ;;
-      05-inherit-system) story_inherit ;;
-      06-walk-away) story_walk_away ;;
-      *) echo "visual-proof: unknown story ${2:-}" >&2; exit 2 ;;
+      separate-database-program-and-baseline) story_layout ;;
+      hook-venv-lives-in-cache) story_hooks ;;
+      timer-script-lives-in-state) story_timer_where ;;
+      uninstall-removes-timer-keeps-repo) story_uninstall ;;
+      *) echo "visual-proof: unknown still ${2:-}" >&2; exit 2 ;;
     esac
     ;;
   *)
-    echo "usage: visual-proof.sh all | visual-proof.sh step <name> | visual-proof.sh story <name>" >&2
+    echo "usage: visual-proof.sh all | visual-proof.sh movie <name> | visual-proof.sh still <name>" >&2
     exit 2
     ;;
 esac

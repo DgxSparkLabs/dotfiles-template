@@ -42,15 +42,12 @@ jobs:
       - name: Summarize the recordings
         if: always()
         run: |
-          if [ -f proof/INDEX.txt ]; then
+          if [ -f proof/README.md ]; then
             {
               echo "## Visual proof"
               echo
-              echo "Download the \`visual-proof\` artifact. Each step has a \`.cast\` tape, the still \`.svg\` captured with that tape, and a \`.png\` rendered from the tape."
+              echo "Open \`README.md\` in the \`visual-proof\` artifact. Each file name is the check. The \`.svg\` is the picture, the \`.cast\` is the tape, and the \`.png\` is a still of that tape. A picture with no \`Result: PASS\` line did not pass."
               echo
-              echo '```'
-              cat proof/INDEX.txt
-              echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
